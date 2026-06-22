@@ -1,17 +1,16 @@
 import { Mail, Phone, Users } from 'lucide-react';
-
-const clients = [
-  { name: 'Urban Shop', sla: 'J+1', contact: 'Nadia Martin', volume: '1 240 colis/mois' },
-  { name: 'Médical Est', sla: 'Prioritaire', contact: 'Samir Lopez', volume: '430 colis/mois' },
-  { name: 'Retail Sud', sla: 'J+2', contact: 'Claire Moreau', volume: '980 colis/mois' },
-];
+import DataState from '../components/DataState';
+import { useSupabaseTable } from '../lib/useSupabaseTable';
+import { asText, recordKey, TABLES } from '../lib/supabase';
 
 export default function Clients() {
+  const { rows: clients, loading, error } = useSupabaseTable(TABLES.clients);
   return (
     <section className="module-page">
-      <div className="module-actions"><button><Users /> Nouveau client</button><button className="secondary"><Mail /> Message groupé</button></div>
+      <div className="module-actions"><button type="button"><Users /> Clients Supabase</button><button type="button" className="secondary"><Mail /> Contacts réels</button></div>
+      <DataState loading={loading} error={error} empty={!clients.length} />
       <div className="card-grid">
-        {clients.map((client) => <article className="work-card client-card" key={client.name}><strong>{client.name}</strong><span>SLA {client.sla}</span><p>{client.volume}</p><small><Phone size={15} /> {client.contact}</small></article>)}
+        {clients.map((client, index) => <article className="work-card client-card" key={recordKey(client, `client-${index}`)}><strong>{asText(client, ['nom', 'name', 'raison_sociale', 'id'])}</strong><span>{asText(client, ['email', 'sla', 'statut'])}</span><p>{asText(client, ['adresse', 'ville', 'volume'], '')}</p><small><Phone size={15} /> {asText(client, ['telephone', 'phone', 'contact'], 'Contact non renseigné')}</small></article>)}
       </div>
     </section>
   );

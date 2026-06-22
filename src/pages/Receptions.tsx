@@ -1,20 +1,52 @@
-import { Check, ClipboardList, PackagePlus } from 'lucide-react';
-
-const arrivals = [
-  { id: 'REC-2406', supplier: 'Colock Packaging', dock: 'Quai 1', state: 'Déchargement' },
-  { id: 'REC-2407', supplier: 'Orange Supply', dock: 'Quai 3', state: 'Contrôle qualité' },
-  { id: 'REC-2408', supplier: 'Box Partner', dock: 'Attente', state: 'Planifiée' },
-];
+import { FormEvent, useState } from 'react';
+import { Camera, ClipboardList, PackagePlus } from 'lucide-react';
+import DataState from '../components/DataState';
+import { insertRecord, useSupabaseTable } from '../lib/useSupabaseTable';
+import { asText, recordKey, supabase, TABLES } from '../lib/supabase';
 
 export default function Receptions() {
+  const { rows: receptions, loading, error, refresh } = useSupabaseTable(TABLES.receptions);
+  const [message, setMessage] = useState('');
+
+  async function submitReception(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage('');
+    const form = new FormData(event.currentTarget);
+    const file = form.get('photo') as File;
+    let photo_url = '';
+
+    if (file?.size) {
+      const path = `receptions/${Date.now()}-${file.name}`;
+      const upload = await supabase.storage.from('photos').upload(path, file, { upsert: true });
+      if (upload.error) throw upload.error;
+      photo_url = supabase.storage.from('photos').getPublicUrl(path).data.publicUrl;
+      await insertRecord(TABLES.photos, { table_source: TABLES.receptions, url: photo_url, nom: file.name });
+    }
+
+    await insertRecord(TABLES.receptions, {
+      reference: form.get('reference'),
+      fournisseur: form.get('fournisseur'),
+      quai: form.get('quai'),
+      statut: form.get('statut'),
+      commentaire: form.get('commentaire'),
+      photo_url,
+    });
+    event.currentTarget.reset();
+    setMessage('Réception enregistrée dans Supabase.');
+    await refresh();
+  }
+
   return (
     <section className="module-page">
-      <div className="module-actions">
-        <button><PackagePlus /> Nouvelle réception</button>
-        <button className="secondary"><ClipboardList /> Liste d'attente</button>
-      </div>
+      <form className="form-card" onSubmit={(event) => void submitReception(event).catch((err) => setMessage(err.message))}>
+        <h3><PackagePlus /> Réception avec photo</h3>
+        <div className="form-grid"><input name="reference" placeholder="Référence réception" required /><input name="fournisseur" placeholder="Fournisseur" /><input name="quai" placeholder="Quai" /><select name="statut" defaultValue="reçue"><option>planifiée</option><option>reçue</option><option>contrôle</option><option>anomalie</option></select><input name="photo" type="file" accept="image/*" /><textarea name="commentaire" placeholder="Commentaire / anomalie" /></div>
+        <button><Camera /> Enregistrer réception</button>{message && <p className="form-message">{message}</p>}
+      </form>
+      <div className="module-actions"><button className="secondary" type="button"><ClipboardList /> Données réelles Supabase</button></div>
+      <DataState loading={loading} error={error} empty={!receptions.length} />
       <div className="data-list">
-        {arrivals.map((arrival) => <article className="data-row" key={arrival.id}><strong>{arrival.id}</strong><span>{arrival.supplier}</span><span>{arrival.dock}</span><em>{arrival.state}</em><Check /></article>)}
+        {receptions.map((arrival, index) => <article className="data-row" key={recordKey(arrival, `reception-${index}`)}><strong>{asText(arrival, ['reference', 'numero', 'id'])}</strong><span>{asText(arrival, ['fournisseur', 'supplier', 'client'])}</span><span>{asText(arrival, ['quai', 'dock', 'emplacement'])}</span><em>{asText(arrival, ['statut', 'state', 'status'])}</em></article>)}
       </div>
     </section>
   );

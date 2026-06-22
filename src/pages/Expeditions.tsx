@@ -1,17 +1,33 @@
+import { FormEvent, useState } from 'react';
 import { FileCheck2, Send, Truck } from 'lucide-react';
-
-const departures = [
-  { id: 'EXP-7751', carrier: 'ExpressNord', slots: '16:30', parcels: 96 },
-  { id: 'EXP-7752', carrier: 'ChronoBox', slots: '17:10', parcels: 142 },
-  { id: 'EXP-7753', carrier: 'GreenLine', slots: '18:00', parcels: 54 },
-];
+import DataState from '../components/DataState';
+import { insertRecord, useSupabaseTable } from '../lib/useSupabaseTable';
+import { asText, recordKey, TABLES } from '../lib/supabase';
 
 export default function Expeditions() {
+  const { rows: expeditions, loading, error, refresh } = useSupabaseTable(TABLES.expeditions);
+  const { rows: commandes } = useSupabaseTable(TABLES.commandes);
+  const [message, setMessage] = useState('');
+
+  async function submitExpedition(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    await insertRecord(TABLES.expeditions, { reference: form.get('reference'), commande_id: form.get('commande_id'), transporteur: form.get('transporteur'), tracking: form.get('tracking'), statut: form.get('statut') });
+    event.currentTarget.reset();
+    setMessage('Expédition enregistrée dans Supabase.');
+    await refresh();
+  }
+
   return (
     <section className="module-page">
-      <div className="module-actions"><button><Send /> Créer expédition</button><button className="secondary"><FileCheck2 /> Documents</button></div>
+      <form className="form-card" onSubmit={(event) => void submitExpedition(event).catch((err) => setMessage(err.message))}>
+        <h3><Send /> Expédition</h3>
+        <div className="form-grid"><input name="reference" placeholder="Référence expédition" required /><select name="commande_id"><option value="">Commande</option>{commandes.map((order, index) => <option key={recordKey(order, `order-${index}`)} value={String(order.id ?? asText(order, ['reference']))}>{asText(order, ['reference', 'numero', 'id'])}</option>)}</select><input name="transporteur" placeholder="Transporteur" /><input name="tracking" placeholder="N° tracking" /><select name="statut" defaultValue="expédiée"><option>à expédier</option><option>expédiée</option><option>livrée</option><option>incident</option></select></div>
+        <button><FileCheck2 /> Valider expédition</button>{message && <p className="form-message">{message}</p>}
+      </form>
+      <DataState loading={loading} error={error} empty={!expeditions.length} />
       <div className="data-list">
-        {departures.map((departure) => <article className="data-row" key={departure.id}><strong>{departure.id}</strong><span><Truck size={18} /> {departure.carrier}</span><span>Départ {departure.slots}</span><em>{departure.parcels} colis</em></article>)}
+        {expeditions.map((departure, index) => <article className="data-row" key={recordKey(departure, `exp-${index}`)}><strong>{asText(departure, ['reference', 'numero', 'id'])}</strong><span><Truck size={18} /> {asText(departure, ['transporteur', 'carrier'])}</span><span>{asText(departure, ['tracking', 'commande_id'])}</span><em>{asText(departure, ['statut', 'status'])}</em></article>)}
       </div>
     </section>
   );
