@@ -37,3 +37,9 @@ npx vercel --prod
 ```
 
 Make sure the Vercel project has `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` configured before deploying.
+
+## Fixing the Receptions RLS error
+
+The Receptions page first uploads the selected image to the public Supabase Storage bucket `photos`, then inserts a metadata row in the `photos` table, and finally inserts the reception row in `receptions`. If `receptions` already has RLS disabled, the `new row violates row-level security policy` error is triggered by either `storage.objects` during the upload or the `photos` metadata table insert.
+
+Run `supabase/reception_rls_fix.sql` in the Supabase SQL editor (or through a service-role database connection) to disable RLS on `receptions` and `photos` and to add the required Storage policies for the `photos` bucket.

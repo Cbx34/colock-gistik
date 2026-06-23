@@ -4,6 +4,11 @@ import DataState from '../components/DataState';
 import { insertRecord, useSupabaseTable } from '../lib/useSupabaseTable';
 import { asText, recordKey, supabase, TABLES } from '../lib/supabase';
 
+function receptionError(step: 'storage' | 'photos' | 'receptions', error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(`Erreur Supabase ${step}: ${message}`);
+}
+
 export default function Receptions() {
   const { rows: receptions, loading, error, refresh } = useSupabaseTable(TABLES.receptions);
   const [message, setMessage] = useState('');
@@ -18,9 +23,10 @@ export default function Receptions() {
     if (file?.size) {
       const path = `receptions/${Date.now()}-${file.name}`;
       const upload = await supabase.storage.from('photos').upload(path, file, { upsert: true });
-      if (upload.error) throw upload.error;
+      if (upload.error) throw receptionError('storage', upload.error);
       photo_url = supabase.storage.from('photos').getPublicUrl(path).data.publicUrl;
-      await insertRecord(TABLES.photos, { table_source: TABLES.receptions, url: photo_url, nom: file.name });
+      await insertRecord(TABLES.photos, { table_source: TABLES.receptions, url: photo_url, nom: file.name })
+        .catch((error) => { throw receptionError('photos', error); });
     }
 
     await insertRecord(TABLES.receptions, {
@@ -30,7 +36,7 @@ export default function Receptions() {
       statut: form.get('statut'),
       commentaire: form.get('commentaire'),
       photo_url,
-    });
+    }).catch((error) => { throw receptionError('receptions', error); });
     event.currentTarget.reset();
     setMessage('Réception enregistrée dans Supabase.');
     await refresh();
