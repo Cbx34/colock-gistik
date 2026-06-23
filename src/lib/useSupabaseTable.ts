@@ -8,7 +8,7 @@ type TableState = {
   refresh: () => Promise<void>;
 };
 
-export function useSupabaseTable(table: string, orderBy = 'created_at', ascending = false): TableState {
+export function useSupabaseTable(table: string, orderBy = 'id', ascending = false): TableState {
   const [rows, setRows] = useState<DbRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -22,7 +22,18 @@ export function useSupabaseTable(table: string, orderBy = 'created_at', ascendin
 
     setLoading(true);
     setError(null);
-    const { data, error: requestError } = await supabase.from(table).select('*').order(orderBy, { ascending });
+
+    let request = supabase.from(table).select('*');
+    if (orderBy) request = request.order(orderBy, { ascending });
+
+    let { data, error: requestError } = await request;
+
+    if (requestError && requestError.message.includes('does not exist')) {
+      const fallback = await supabase.from(table).select('*');
+      data = fallback.data;
+      requestError = fallback.error;
+    }
+
     if (requestError) setError(requestError.message);
     setRows((data ?? []) as DbRecord[]);
     setLoading(false);
@@ -37,7 +48,7 @@ export function useSupabaseTable(table: string, orderBy = 'created_at', ascendin
 
 export async function insertRecord(table: string, payload: DbRecord) {
   if (!isSupabaseConfigured) throw new Error('Supabase n’est pas configuré.');
-  const cleaned = Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== '' && value !== undefined));
+  const cleaned = Object.fromEntries(Object.entries(payload).filter(([, value]) => value !== '' && value !== undefined && value !== null));
   const { error } = await supabase.from(table).insert(cleaned);
   if (error) throw error;
 }
