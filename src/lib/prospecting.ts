@@ -125,14 +125,30 @@ export function apifyItemToProspect(item: Record<string, unknown>, criteria: Sea
   }, 'Apify');
 }
 
+async function readApifyError(res: Response) {
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('application/json')) {
+    const body = await res.json() as { error?: string; details?: string };
+    return body.error || body.details || `Erreur Apify (${res.status})`;
+  }
+  return (await res.text()) || `Erreur Apify (${res.status})`;
+}
+
 export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS): Promise<ApifyImportResult> {
   const cleanActorId = actorId.trim() || 'compass/crawler-google-places';
   const cleanToken = token.trim();
-  if (!cleanToken) throw new Error('Erreur token Apify');
+
+  if (!cleanToken) {
+    const proxyRes = await fetch('/api/apify-prospects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: cleanActorId, criteria, maxItems }) });
+    if (proxyRes.status === 401 || proxyRes.status === 403) throw new Error('Erreur token Apify');
+    if (!proxyRes.ok) throw new Error(await readApifyError(proxyRes));
+    return await proxyRes.json() as ApifyImportResult;
+  }
+
   const input = buildApifyGoogleMapsInput(criteria, maxItems);
   const res = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(cleanActorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(cleanToken)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
   if (res.status === 401 || res.status === 403) throw new Error('Erreur token Apify');
-  if (!res.ok) throw new Error(`Erreur Apify (${res.status})`);
+  if (!res.ok) throw new Error(await readApifyError(res));
   const items = await res.json() as Array<Record<string, unknown>>;
   return { prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0] };
 }
