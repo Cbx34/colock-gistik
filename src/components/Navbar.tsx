@@ -1,6 +1,6 @@
 import { BarChart3, Download, Mail, MessageSquareText, Radar, RefreshCw, Settings, Target, Truck, Users } from 'lucide-react';
 
-export type NavItem = { key: 'dashboard' | 'search' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'export' | 'settings'; label: string; icon: typeof BarChart3 };
+export type NavItem = { key: 'dashboard' | 'search' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'campaigns' | 'export' | 'settings'; label: string; icon: typeof BarChart3 };
 export const navItems: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { key: 'search', label: 'Recherche prospects', icon: Radar },
@@ -8,6 +8,7 @@ export const navItems: NavItem[] = [
   { key: 'prospect', label: 'Fiche prospect', icon: Target },
   { key: 'messages', label: 'Messages générés', icon: MessageSquareText },
   { key: 'followups', label: 'Relances', icon: RefreshCw },
+  { key: 'campaigns', label: 'Campagnes', icon: BarChart3 },
   { key: 'export', label: 'Export CSV', icon: Download },
   { key: 'settings', label: 'Paramètres', icon: Settings },
 ];

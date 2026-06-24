@@ -21,6 +21,8 @@ export const TABLES = {
   expeditions: 'expeditions',
   photos: 'photos',
   emplacements: 'emplacements',
+  prospects: 'prospects',
+  campagnes: 'campagnes',
 } as const;
 
 export function asText(record: DbRecord | null | undefined, fields: string[], fallback = '—') {
