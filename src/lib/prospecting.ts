@@ -12,7 +12,7 @@ export type Prospect = {
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
-export type ApifyImportResult = { prospects: Prospect[]; query: string; itemsCount: number; insertedCount?: number; progress?: string[] };
+export type ApifyImportResult = { prospects: Prospect[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
 export type ApifyProgressStep = 'token-detected' | 'actor-started' | 'dataset-retrieved' | 'results-found' | 'prospects-inserted';
 export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: number };
 
@@ -158,7 +158,7 @@ export async function fetchApifyProspects(actorId: string, token: string, criter
     'Actor launched',
     'Dataset retrieved',
     `${result?.itemsCount ?? result?.prospects.length ?? 0} results found`,
-    `${result?.insertedCount ?? result?.prospects.length ?? 0} prospects inserted`,
+    `${result?.insertedCount ?? result?.prospects.length ?? 0} nouveaux prospects ajoutés, ${result?.duplicateCount ?? 0} doublons ignorés`,
   ];
   progressMessages.forEach((message) => {
     const step: ApifyProgressStep = message.includes('Token') ? 'token-detected'
