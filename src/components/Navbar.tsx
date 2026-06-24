@@ -1,51 +1,16 @@
-import { BarChart3, Boxes, ClipboardCheck, History, PackageSearch, PackagePlus, Search, Send, Truck, Users } from 'lucide-react';
+import { BarChart3, Download, Mail, MessageSquareText, Radar, RefreshCw, Settings, Target, Truck, Users } from 'lucide-react';
 
-export type NavItem = {
-  key: 'dashboard' | 'receptions' | 'stock' | 'preparations' | 'expeditions' | 'clients' | 'search' | 'history';
-  label: string;
-  icon: typeof BarChart3;
-};
-
+export type NavItem = { key: 'dashboard' | 'search' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'export' | 'settings'; label: string; icon: typeof BarChart3 };
 export const navItems: NavItem[] = [
-  { key: 'dashboard', label: 'Accueil', icon: BarChart3 },
-  { key: 'receptions', label: 'Réceptions', icon: PackagePlus },
-  { key: 'stock', label: 'Stock', icon: Boxes },
-  { key: 'preparations', label: 'Préparations', icon: ClipboardCheck },
-  { key: 'expeditions', label: 'Expéditions', icon: Send },
-  { key: 'clients', label: 'Clients', icon: Users },
-  { key: 'search', label: 'Recherche', icon: Search },
-  { key: 'history', label: 'Historique', icon: History },
+  { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
+  { key: 'search', label: 'Recherche prospects', icon: Radar },
+  { key: 'prospects', label: 'Liste prospects', icon: Users },
+  { key: 'prospect', label: 'Fiche prospect', icon: Target },
+  { key: 'messages', label: 'Messages générés', icon: MessageSquareText },
+  { key: 'followups', label: 'Relances', icon: RefreshCw },
+  { key: 'export', label: 'Export CSV', icon: Download },
+  { key: 'settings', label: 'Paramètres', icon: Settings },
 ];
-
-type NavbarProps = {
-  activePage: NavItem['key'];
-};
-
-export default function Navbar({ activePage }: NavbarProps) {
-  return (
-    <aside className="sidebar" aria-label="Navigation principale">
-      <a className="brand" href="#dashboard" aria-label="COLOCK-GISTIK accueil">
-        <span className="brand-mark"><Truck size={28} /></span>
-        <span><strong>COLOCK</strong><small>GISTIK</small></span>
-      </a>
-
-      <nav className="nav-list">
-        {navItems.map((item) => {
-          const Icon = item.icon;
-          return (
-            <a className={`nav-button ${activePage === item.key ? 'is-active' : ''}`} href={`#${item.key}`} key={item.key}>
-              <Icon size={22} />
-              <span>{item.label}</span>
-            </a>
-          );
-        })}
-      </nav>
-
-      <div className="sidebar-card">
-        <PackageSearch size={28} />
-        <strong>Scan rapide</strong>
-        <span>Palette, BL, commande ou quai.</span>
-      </div>
-    </aside>
-  );
+export default function Navbar({ activePage }: { activePage: NavItem['key'] }) {
+  return <aside className="sidebar" aria-label="Navigation principale"><a className="brand" href="#dashboard"><span className="brand-mark"><Truck size={28}/></span><span><strong>COLOCK</strong><small>PROSPECTION</small></span></a><nav className="nav-list">{navItems.map((item)=>{const Icon=item.icon;return <a className={`nav-button ${activePage===item.key?'is-active':''}`} href={`#${item.key}`} key={item.key}><Icon size={22}/><span>{item.label}</span></a>})}</nav><div className="sidebar-card"><Mail size={28}/><strong>RGPD safe</strong><span>Données publiques, contact modéré, suppression possible.</span></div></aside>;
 }
