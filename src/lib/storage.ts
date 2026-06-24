@@ -1,13 +1,5 @@
 import type { Prospect } from './prospecting';
 
-const KEY = 'colock-prospects-mvp';
-
-export function loadProspects(): Prospect[] {
-  try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; }
-}
-
-export function saveProspects(prospects: Prospect[]) { localStorage.setItem(KEY, JSON.stringify(prospects)); }
-
 export function exportProspectsCsv(prospects: Prospect[]) {
   const headers = ['nom_boutique','site_web','instagram','tiktok','linkedin','email','telephone','plateforme','type_produits','ville','pays','score','classement','statut_contact','signaux','source','import_source'];
   const rows = prospects.map((p) => [p.nomBoutique,p.siteWeb,p.instagram,p.tiktok,p.linkedin,p.email,p.telephone,p.plateforme,p.typeProduits,p.ville,p.pays,p.score,p.classement,p.statutContact,p.volumeSignaux.join(' | '),p.sourceUrl,p.source]);

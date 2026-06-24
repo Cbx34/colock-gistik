@@ -16,12 +16,14 @@ Application React mobile/desktop pour prospecter automatiquement des vendeurs e-
 
 - `src/App.tsx` : pages MVP et orchestration de l'interface.
 - `src/lib/prospecting.ts` : scoring, modèles de messages, liens de recherche et données de test.
-- `src/lib/storage.ts` : persistance locale et export CSV pour tester immédiatement.
+- `src/lib/storage.ts` : export CSV des prospects chargés depuis Supabase.
 - `supabase/prospecting.sql` : tables Supabase `prospects`, `prospect_sources`, `messages`, `relances`, `campagnes` et `interactions`.
 
 ## Supabase
 
-Exécutez le SQL de `supabase/prospecting.sql` dans l'éditeur SQL Supabase. Le MVP fonctionne aussi sans Supabase grâce à `localStorage`, pour permettre un test immédiat.
+Renseignez `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans l’environnement Vite. Le module Prospection utilise uniquement Supabase pour persister les prospects, campagnes, messages et relances. Si ces variables sont absentes, l’interface affiche une erreur claire et l’indicateur `Supabase non connecté`.
+
+Le script `supabase/prospecting.sql` crée les tables et la fonction RPC `create_prospecting_schema()`. L’application vérifie les tables au démarrage et appelle cette RPC si le schéma Prospection est absent.
 
 ## Ajouter Apify ou Octoparse ensuite
 
