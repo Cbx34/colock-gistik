@@ -1,4 +1,4 @@
-const DEFAULT_ACTOR_ID = 'compass/crawler-google-places';
+const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
 const DEFAULT_MAX_ITEMS = 25;
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
@@ -8,6 +8,7 @@ const asNumber = (value, fallback) => {
 };
 const nowIso = () => new Date().toISOString();
 const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
+const normalizeActorId = (actorId) => asString(actorId).replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '').replace(/^https:\/\/console\.apify\.com\/actors\//, '').replace(/\//g, '~');
 const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
 
 function scoreProspect(input) {
@@ -116,7 +117,7 @@ async function handler(req, res) {
 
   const body = req.body || {};
   const criteria = body.criteria;
-  const actorId = asString(body.actorId) || process.env.APIFY_ACTOR_ID || process.env.VITE_APIFY_ACTOR_ID || DEFAULT_ACTOR_ID;
+  const actorId = normalizeActorId(body.actorId || process.env.APIFY_ACTOR_ID || process.env.VITE_APIFY_ACTOR_ID || DEFAULT_ACTOR_ID);
   const token = process.env.APIFY_TOKEN || process.env.VITE_APIFY_TOKEN || asString(body.token);
   const maxItems = asNumber(body.maxItems, DEFAULT_MAX_ITEMS);
 
@@ -126,11 +127,13 @@ async function handler(req, res) {
   }
 
   if (!token) {
-    res.status(401).json({ error: 'Erreur token Apify' });
+    res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
     return;
   }
 
   const input = buildApifyGoogleMapsInput(criteria, maxItems);
+
+  try {
   const apifyRes = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -138,7 +141,8 @@ async function handler(req, res) {
   });
 
   if (apifyRes.status === 401 || apifyRes.status === 403) {
-    res.status(401).json({ error: 'Erreur token Apify' });
+    const details = await apifyRes.text();
+    res.status(apifyRes.status).json({ error: `Apify a refusé la requête (${apifyRes.status})`, details: details.slice(0, 1000) });
     return;
   }
 
@@ -149,7 +153,10 @@ async function handler(req, res) {
   }
 
   const items = await apifyRes.json();
-  res.status(200).json({ prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0] });
+  res.status(200).json({ prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0], itemsCount: items.length });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify' });
+  }
 }
 
 module.exports = handler;

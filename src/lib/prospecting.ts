@@ -12,7 +12,9 @@ export type Prospect = {
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
-export type ApifyImportResult = { prospects: Prospect[]; query: string };
+export type ApifyImportResult = { prospects: Prospect[]; query: string; itemsCount: number };
+export type ApifyProgressStep = 'call-started' | 'actor-started' | 'dataset-retrieved' | 'results-found';
+export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: number };
 
 const DEFAULT_APIFY_MAX_ITEMS = 25;
 
@@ -126,31 +128,44 @@ export function apifyItemToProspect(item: Record<string, unknown>, criteria: Sea
 }
 
 async function readApifyError(res: Response) {
+  const fallback = `Erreur Apify (${res.status})`;
   const contentType = res.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
-    const body = await res.json() as { error?: string; details?: string };
-    return body.error || body.details || `Erreur Apify (${res.status})`;
+    const body = await res.json().catch(() => ({})) as { error?: string; details?: string; message?: string };
+    return [body.error, body.details, body.message].filter(Boolean).join(' — ') || fallback;
   }
-  return (await res.text()) || `Erreur Apify (${res.status})`;
+  const text = await res.text().catch(() => '');
+  return text || fallback;
 }
 
-export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS): Promise<ApifyImportResult> {
-  const cleanActorId = actorId.trim() || 'compass/crawler-google-places';
+function normalizeApifyActorId(actorId: string) {
+  return actorId.trim().replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '').replace(/^https:\/\/console\.apify\.com\/actors\//, '').replace(/\//g, '~');
+}
+
+export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS, onProgress?: (progress: ApifyProgress) => void): Promise<ApifyImportResult> {
+  const cleanActorId = normalizeApifyActorId(actorId || 'compass/crawler-google-places');
   const cleanToken = token.trim();
+
+  onProgress?.({ step: 'call-started', message: 'Appel Apify lancé' });
 
   if (!cleanToken) {
     const proxyRes = await fetch('/api/apify-prospects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actorId: cleanActorId, criteria, maxItems }) });
-    if (proxyRes.status === 401 || proxyRes.status === 403) throw new Error('Erreur token Apify');
     if (!proxyRes.ok) throw new Error(await readApifyError(proxyRes));
-    return await proxyRes.json() as ApifyImportResult;
+    const result = await proxyRes.json() as ApifyImportResult;
+    onProgress?.({ step: 'actor-started', message: 'Actor lancé' });
+    onProgress?.({ step: 'dataset-retrieved', message: 'Dataset récupéré' });
+    onProgress?.({ step: 'results-found', message: `${result.itemsCount ?? result.prospects.length} résultats trouvés`, count: result.itemsCount ?? result.prospects.length });
+    return result;
   }
 
   const input = buildApifyGoogleMapsInput(criteria, maxItems);
+  onProgress?.({ step: 'actor-started', message: 'Actor lancé' });
   const res = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(cleanActorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(cleanToken)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
-  if (res.status === 401 || res.status === 403) throw new Error('Erreur token Apify');
   if (!res.ok) throw new Error(await readApifyError(res));
   const items = await res.json() as Array<Record<string, unknown>>;
-  return { prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0] };
+  onProgress?.({ step: 'dataset-retrieved', message: 'Dataset récupéré' });
+  onProgress?.({ step: 'results-found', message: `${items.length} résultats trouvés`, count: items.length });
+  return { prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0], itemsCount: items.length };
 }
 
 export function generateMessage(prospect: Prospect, step: 0 | 2 | 5 | 10 = 0) { const firstLine = prospect.typeProduits ? `J’ai vu votre boutique ${prospect.nomBoutique} autour de ${prospect.typeProduits}.` : `J’ai vu votre boutique ${prospect.nomBoutique}.`; const local = prospect.ville ? ` depuis Montpellier / Lavérune / Le Crès vers vos clients` : ' depuis Montpellier / Lavérune / Le Crès'; const base = `${firstLine}\n\nChez Colock-Gistik, nous aidons les vendeurs e-commerce à externaliser la réception marchandise, le stockage, la préparation colis, l’emballage et l’expédition multi-transporteurs${local}.\n\nSi vous expédiez régulièrement des colis, je peux vous proposer une solution simple pour gagner du temps sans recruter ni louer plus d’espace.\n\nEst-ce que je peux vous envoyer une estimation rapide adaptée à vos volumes ?\n\nBonne journée,\nL’équipe Colock-Gistik`; const relances: Record<number, string> = { 2: `Bonjour,\n\nJe me permets une relance rapide concernant ${prospect.nomBoutique}. Si vos commandes augmentent, Colock-Gistik peut prendre en charge stockage, préparation et expédition depuis la métropole de Montpellier.\n\nSouhaitez-vous que je vous envoie une proposition courte ?`, 5: `Bonjour,\n\nJe reviens vers vous une dernière fois cette semaine. Nous accompagnons des petites marques e-commerce qui veulent expédier plus vite sans gérer l’entrepôt au quotidien.\n\nSi ce n’est pas le bon moment, dites-le moi et je ne vous relancerai pas.`, 10: `Bonjour,\n\nJe clôture ma prise de contact pour ${prospect.nomBoutique}. Si vous cherchez plus tard une solution de stockage, préparation colis et expédition multi-transporteurs à Montpellier, vous pouvez me répondre ici.\n\nBonne continuation !` }; return step === 0 ? base : relances[step]; }
