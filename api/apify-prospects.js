@@ -1,3 +1,4 @@
+const { randomUUID } = require('node:crypto');
 const { createClient } = require('@supabase/supabase-js');
 
 const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
@@ -14,6 +15,15 @@ const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
 const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
 const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+const describeError = (error) => {
+  if (error instanceof Error) {
+    return { message: error.message, name: error.name, stack: error.stack };
+  }
+  return { message: String(error), raw: error };
+};
+const logError = (message, error, context = {}) => {
+  console.error(message, { ...context, error: describeError(error) });
+};
 const normalizeActorId = (actorId) => {
   const normalized = asString(actorId || DEFAULT_ACTOR_ID)
     .replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '')
@@ -56,7 +66,7 @@ function scoreProspect(input) {
 function normalizeProspect(draft, source = 'Apify') {
   const scored = scoreProspect(draft);
   return {
-    id: draft.id || crypto.randomUUID(),
+    id: draft.id || randomUUID(),
     nomBoutique: draft.nomBoutique.trim(),
     siteWeb: draft.siteWeb?.trim() || undefined,
     instagram: draft.instagram?.trim() || undefined,
@@ -122,7 +132,10 @@ async function insertProspects(prospects) {
   if (!prospects.length) return { added: 0, ignored: 0 };
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
-  if (selectError) throw new Error(selectError.message);
+  if (selectError) {
+    logError('[apify-prospects] Supabase prospect lookup failed', selectError, { code: selectError.code, details: selectError.details, hint: selectError.hint });
+    throw new Error(selectError.message);
+  }
 
   const existingIds = new Set((existing || []).map((row) => row.id).filter(Boolean));
   const existingEmails = new Set((existing || []).map((row) => normalizeEmail(row.email)).filter(Boolean));
@@ -148,14 +161,20 @@ async function insertProspects(prospects) {
   if (!rows.length) return { added: 0, ignored };
   const { error } = await supabase.from('prospects').insert(rows);
   if (!error) return { added: rows.length, ignored };
-  if (!isDuplicateError(error)) throw new Error(error.message);
+  if (!isDuplicateError(error)) {
+    logError('[apify-prospects] Supabase bulk insert failed', error, { code: error.code, details: error.details, hint: error.hint, rows: rows.length });
+    throw new Error(error.message);
+  }
 
   let added = 0;
   for (const row of rows) {
     const { error: rowError } = await supabase.from('prospects').insert(row);
     if (!rowError) added += 1;
     else if (isDuplicateError(rowError)) ignored += 1;
-    else throw new Error(rowError.message);
+    else {
+      logError('[apify-prospects] Supabase single-row insert failed', rowError, { code: rowError.code, details: rowError.details, hint: rowError.hint, prospectId: row.id });
+      throw new Error(rowError.message);
+    }
   }
   return { added, ignored };
 }
@@ -181,7 +200,11 @@ async function handler(req, res) {
     const apifyUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
     const apifyRes = await fetch(apifyUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
     progress.push('Actor launched');
-    if (!apifyRes.ok) throw new Error(await readApiError(apifyRes));
+    if (!apifyRes.ok) {
+      const message = await readApiError(apifyRes);
+      logError('[apify-prospects] Apify actor request failed', new Error(message), { status: apifyRes.status, actorId, query: input.searchStringsArray[0] });
+      throw new Error(message);
+    }
 
     const items = await apifyRes.json();
     progress.push('Dataset retrieved');
@@ -193,6 +216,7 @@ async function handler(req, res) {
 
     return res.status(200).json({ prospects, query: input.searchStringsArray[0], itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
   } catch (error) {
+    logError('[apify-prospects] Route failed', error, { actorId, progress });
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', actorId, progress });
   }
 }
