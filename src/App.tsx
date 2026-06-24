@@ -4,7 +4,7 @@ import Layout, { type PageKey } from './components/Layout';
 import { buildSearchLinks, defaultCampaigns, fetchApifyProspects, followUpDays, generateMessage, mergeProspects, mockProspectSearch, parseCsvProspects, prospectStatuses, scoreProspect, type Campaign, type Platform, type Prospect, type ApifyProgress, type SearchCriteria } from './lib/prospecting';
 import { exportProspectsCsv } from './lib/storage';
 import { isSupabaseConfigured } from './lib/supabase';
-import { loadProspectingData, saveCampaignsToSupabase, saveProspectsToSupabase, type SupabaseConnectionState } from './lib/prospectPersistence';
+import { loadProspectingData, saveCampaignsToSupabase, saveProspectsToSupabase, syncProspectsWithSupabase, type SupabaseConnectionState } from './lib/prospectPersistence';
 
 function Stat({ label, value }: { label: string; value: ReactNode }) { return <div className="stat-card"><strong>{value}</strong><span>{label}</span></div>; }
 function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span>; }
@@ -56,14 +56,14 @@ export default function App() {
     setApifyLoading(true);
     try {
       const result = await fetchApifyProspects(apifyActor, apifyToken, criteria, undefined, (progress: ApifyProgress) => addApifyMessage(progress.message));
-      if (!result.prospects.length) {
-        addApifyMessage('0 prospect enregistré');
-        return;
+      if (connection.connected) {
+        const refreshed = await syncProspectsWithSupabase(result.prospects);
+        setProspects(refreshed);
+      } else {
+        const merged = mergeProspects(prospects, result.prospects);
+        setProspects(merged.prospects);
+        addApifyMessage(`${merged.added} prospects ajoutés localement${merged.merged ? ` · ${merged.merged} doublons fusionnés` : ''}`);
       }
-      const merged = mergeProspects(prospects, result.prospects);
-      setProspects(merged.prospects);
-      if (connection.connected) await saveProspectsToSupabase(merged.prospects);
-      addApifyMessage(`${merged.added} prospects enregistrés${merged.merged ? ` · ${merged.merged} doublons fusionnés` : ''}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur Apify inconnue';
       addApifyMessage(`Erreur exacte : ${message}`);

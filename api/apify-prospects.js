@@ -1,3 +1,5 @@
+const { createClient } = require('@supabase/supabase-js');
+
 const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
 const DEFAULT_MAX_ITEMS = 25;
 
@@ -8,8 +10,32 @@ const asNumber = (value, fallback) => {
 };
 const nowIso = () => new Date().toISOString();
 const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
-const normalizeActorId = (actorId) => asString(actorId).replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '').replace(/^https:\/\/console\.apify\.com\/actors\//, '').replace(/\//g, '~');
 const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+const normalizeActorId = (actorId) => {
+  const normalized = asString(actorId || DEFAULT_ACTOR_ID)
+    .replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '')
+    .replace(/^https:\/\/console\.apify\.com\/actors\//, '')
+    .replace(/\/runs.*$/, '')
+    .replace(/\/input.*$/, '')
+    .replace(/\//g, '~');
+  return normalized || DEFAULT_ACTOR_ID;
+};
+
+function readEnv(...names) {
+  return names.map((name) => asString(process.env[name])).find(Boolean) || '';
+}
+
+async function readApiError(response) {
+  const fallback = `Erreur API (${response.status})`;
+  const text = await response.text().catch(() => '');
+  if (!text) return fallback;
+  try {
+    const json = JSON.parse(text);
+    return json?.error?.message || json?.error || json?.message || text;
+  } catch {
+    return text;
+  }
+}
 
 function scoreProspect(input) {
   let score = 2;
@@ -20,12 +46,11 @@ function scoreProspect(input) {
   if (input.siteWeb) score += 1;
   if (['Shopify', 'TikTok Shop', 'Etsy', 'eBay', 'Vinted'].includes(String(input.plateforme))) score += 1;
   if ((input.ville || '').toLowerCase().match(/montpellier|lavérune|laverune|le crès|le cres|nîmes|nimes|sète|sete|béziers|beziers|occitanie/)) score += 1;
-  if (input.statutContact === 'Client signé') score += 2;
   const finalScore = Math.max(1, Math.min(10, score));
   return { score: finalScore, classement: finalScore >= 8 ? 'chaud' : finalScore >= 5 ? 'moyen' : 'faible' };
 }
 
-function normalizeProspect(draft, source = 'CSV') {
+function normalizeProspect(draft, source = 'Apify') {
   const scored = scoreProspect(draft);
   return {
     id: draft.id || crypto.randomUUID(),
@@ -41,16 +66,17 @@ function normalizeProspect(draft, source = 'CSV') {
     ville: draft.ville?.trim() || 'France',
     pays: draft.pays?.trim() || 'France',
     ...scored,
-    statutContact: draft.statutContact || 'Nouveau',
+    statutContact: 'Nouveau',
     volumeSignaux: draft.volumeSignaux?.filter(Boolean) || [],
     sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '',
     source,
-    campaignId: draft.campaignId,
     notes: draft.notes,
-    lastContactAt: draft.lastContactAt,
-    nextFollowUpAt: draft.nextFollowUpAt,
     createdAt: draft.createdAt || nowIso(),
   };
+}
+
+function toDb(p) {
+  return { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
 }
 
 function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
@@ -58,10 +84,8 @@ function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
   const product = criteria.productType || 'colis expédition';
   const location = criteria.location || 'Montpellier';
   const baseQuery = [criteria.keywords, platform, product, location].filter(Boolean).join(' ');
-  const searchStringsArray = Array.from(new Set([baseQuery, `${platform} ${location}`, `boutique colis expédition ${location}`].filter(Boolean)));
-
   return {
-    searchStringsArray,
+    searchStringsArray: Array.from(new Set([baseQuery, `${platform} ${location}`, `boutique colis expédition ${location}`].filter(Boolean))),
     locationQuery: location,
     maxCrawledPlacesPerSearch: maxItems,
     maxImages: 0,
@@ -85,77 +109,54 @@ function apifyItemToProspect(item, criteria) {
   const reviews = firstNumber(item, ['reviewsCount', 'reviews', 'reviewCount']);
   const sourceUrl = firstString(item, ['url', 'placeUrl', 'googleMapsUrl', 'searchPageUrl']) || website;
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
+  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, typeProduits: category, ville: city, pays: 'France', sourceUrl, volumeSignaux: ['scraping Apify Google Maps', address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: ['Importé via Apify Google Maps', address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+}
 
-  return normalizeProspect({
-    nomBoutique: name,
-    siteWeb: website,
-    email,
-    telephone: phone,
-    plateforme: platform,
-    typeProduits: category,
-    ville: city,
-    pays: 'France',
-    sourceUrl,
-    statutContact: 'Nouveau',
-    volumeSignaux: [
-      'scraping Apify Google Maps',
-      address ? `adresse: ${address}` : '',
-      rating ? `note Google ${rating}/5` : '',
-      reviews ? `${reviews} avis Google` : '',
-    ].filter(Boolean),
-    notes: ['Importé via Apify Google Maps', address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n'),
-  }, 'Apify');
+async function insertProspects(prospects) {
+  const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
+  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
+  if (!url || !key) throw new Error('Variables Supabase serveur manquantes (SUPABASE_URL/VITE_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY/VITE_SUPABASE_ANON_KEY)');
+  if (!prospects.length) return 0;
+  const supabase = createClient(url, key, { auth: { persistSession: false } });
+  const { error } = await supabase.from('prospects').upsert(prospects.map(toDb), { onConflict: 'id' });
+  if (error) throw new Error(error.message);
+  return prospects.length;
 }
 
 async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
-
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Méthode non autorisée' });
-    return;
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Méthode non autorisée' });
 
   const body = req.body || {};
   const criteria = body.criteria;
   const actorId = normalizeActorId(body.actorId || process.env.APIFY_ACTOR_ID || process.env.VITE_APIFY_ACTOR_ID || DEFAULT_ACTOR_ID);
-  const token = process.env.APIFY_TOKEN || process.env.VITE_APIFY_TOKEN || asString(body.token);
+  const token = readEnv('APIFY_TOKEN', 'VITE_APIFY_TOKEN') || asString(body.token);
   const maxItems = asNumber(body.maxItems, DEFAULT_MAX_ITEMS);
+  const progress = [];
 
-  if (!criteria) {
-    res.status(400).json({ error: 'Critères de recherche manquants' });
-    return;
-  }
+  if (!criteria) return res.status(400).json({ error: 'Critères de recherche manquants' });
+  if (!token) return res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
 
-  if (!token) {
-    res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
-    return;
-  }
-
+  progress.push('Token detected');
   const input = buildApifyGoogleMapsInput(criteria, maxItems);
 
   try {
-  const apifyRes = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  });
+    const apifyUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
+    const apifyRes = await fetch(apifyUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
+    progress.push('Actor launched');
+    if (!apifyRes.ok) throw new Error(await readApiError(apifyRes));
 
-  if (apifyRes.status === 401 || apifyRes.status === 403) {
-    const details = await apifyRes.text();
-    res.status(apifyRes.status).json({ error: `Apify a refusé la requête (${apifyRes.status})`, details: details.slice(0, 1000) });
-    return;
-  }
+    const items = await apifyRes.json();
+    progress.push('Dataset retrieved');
+    const safeItems = Array.isArray(items) ? items : [];
+    progress.push(`${safeItems.length} results found`);
+    const prospects = safeItems.map((item) => apifyItemToProspect(item, criteria));
+    const insertedCount = await insertProspects(prospects);
+    progress.push(`${insertedCount} prospects inserted`);
 
-  if (!apifyRes.ok) {
-    const details = await apifyRes.text();
-    res.status(apifyRes.status).json({ error: `Erreur Apify (${apifyRes.status})`, details: details.slice(0, 500) });
-    return;
-  }
-
-  const items = await apifyRes.json();
-  res.status(200).json({ prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0], itemsCount: items.length });
+    return res.status(200).json({ prospects, query: input.searchStringsArray[0], itemsCount: safeItems.length, insertedCount, actorId, progress });
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify' });
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', actorId, progress });
   }
 }
 
