@@ -13,6 +13,13 @@ const schemaError = 'Supabase n’est pas configuré. Ajoutez VITE_SUPABASE_URL 
 const toDb = (p: Prospect) => ({ id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, last_contact_at: p.lastContactAt, next_follow_up_at: p.nextFollowUpAt, campagne_id: p.campaignId, created_at: p.createdAt });
 const fromDb = (r: Record<string, unknown>) => normalizeProspect({ id: String(r.id), nomBoutique: String(r.nom_boutique), siteWeb: r.site_web as string, instagram: r.instagram as string, tiktok: r.tiktok as string, linkedin: r.linkedin as string, email: r.email as string, telephone: r.telephone as string, plateforme: r.plateforme as Prospect['plateforme'], typeProduits: r.type_produits as string, ville: r.ville as string, pays: r.pays as string, score: r.score as number, classement: r.classement as Prospect['classement'], statutContact: r.statut_contact as Prospect['statutContact'], volumeSignaux: (r.volume_signaux as string[]) ?? [], sourceUrl: r.source_url as string, source: r.source as Prospect['source'], notes: r.notes as string, lastContactAt: r.last_contact_at as string, nextFollowUpAt: r.next_follow_up_at as string, campaignId: r.campagne_id as string, createdAt: r.created_at as string }, (r.source as Prospect['source']) ?? 'CSV');
 
+const normalizeSite = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
+const normalizeEmail = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
+const isDuplicateError = (error: unknown) => {
+  const maybe = error as { code?: string; message?: string };
+  return maybe?.code === '23505' || /duplicate key value violates unique constraint/i.test(maybe?.message ?? '');
+};
+
 const campaignToDb = (c: Campaign) => ({ id: c.id, nom: c.nom, cible: c.cible, statut: c.statut, created_at: c.createdAt });
 const campaignFromDb = (r: Record<string, unknown>): Campaign => ({ id: String(r.id), nom: String(r.nom), cible: String(r.cible), statut: r.statut as Campaign['statut'], createdAt: String(r.created_at) });
 
@@ -66,9 +73,35 @@ export async function syncProspectsWithSupabase(current: Prospect[]) {
 export async function saveProspectsToSupabase(prospects: Prospect[]) {
   if (!isSupabaseConfigured) throw new Error(schemaError);
   if (!prospects.length) return;
-  const { error } = await supabase.from('prospects').upsert(prospects.map(toDb), { onConflict: 'id' });
-  if (error) throw error;
-  await saveMessagesAndFollowUpsToSupabase(prospects);
+
+  const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
+  if (selectError) throw selectError;
+
+  const rowByEmail = new Map<string, string>();
+  const rowBySite = new Map<string, string>();
+  for (const row of existing ?? []) {
+    const email = normalizeEmail(row.email);
+    const site = normalizeSite(row.site_web);
+    if (email) rowByEmail.set(email, String(row.id));
+    if (site) rowBySite.set(site, String(row.id));
+  }
+  const writableProspects = prospects.filter((prospect) => {
+    const emailOwner = rowByEmail.get(normalizeEmail(prospect.email));
+    const siteOwner = rowBySite.get(normalizeSite(prospect.siteWeb));
+    return (!emailOwner || emailOwner === prospect.id) && (!siteOwner || siteOwner === prospect.id);
+  });
+
+  if (!writableProspects.length) return;
+  const rows = writableProspects.map(toDb);
+  const { error } = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
+  if (error) {
+    if (!isDuplicateError(error)) throw error;
+    for (const row of rows) {
+      const { error: rowError } = await supabase.from('prospects').upsert(row, { onConflict: 'id' });
+      if (rowError && !isDuplicateError(rowError)) throw rowError;
+    }
+  }
+  await saveMessagesAndFollowUpsToSupabase(writableProspects);
 }
 
 export async function saveCampaignsToSupabase(campaigns: Campaign[]) {

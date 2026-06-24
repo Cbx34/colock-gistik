@@ -9,6 +9,9 @@ const asNumber = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 const nowIso = () => new Date().toISOString();
+const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
+const normalizeEmail = (value) => asString(value).toLowerCase();
+const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
 const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
 const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
 const normalizeActorId = (actorId) => {
@@ -116,11 +119,45 @@ async function insertProspects(prospects) {
   const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
   const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
   if (!url || !key) throw new Error('Variables Supabase serveur manquantes (SUPABASE_URL/VITE_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY/VITE_SUPABASE_ANON_KEY)');
-  if (!prospects.length) return 0;
+  if (!prospects.length) return { added: 0, ignored: 0 };
   const supabase = createClient(url, key, { auth: { persistSession: false } });
-  const { error } = await supabase.from('prospects').upsert(prospects.map(toDb), { onConflict: 'id' });
-  if (error) throw new Error(error.message);
-  return prospects.length;
+  const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
+  if (selectError) throw new Error(selectError.message);
+
+  const existingIds = new Set((existing || []).map((row) => row.id).filter(Boolean));
+  const existingEmails = new Set((existing || []).map((row) => normalizeEmail(row.email)).filter(Boolean));
+  const existingSites = new Set((existing || []).map((row) => normalizeSite(row.site_web)).filter(Boolean));
+  const seenEmails = new Set();
+  const seenSites = new Set();
+  const rows = [];
+  let ignored = 0;
+
+  for (const prospect of prospects) {
+    const email = normalizeEmail(prospect.email);
+    const site = normalizeSite(prospect.siteWeb);
+    const isDuplicate = existingIds.has(prospect.id) || (email && (existingEmails.has(email) || seenEmails.has(email))) || (site && (existingSites.has(site) || seenSites.has(site)));
+    if (isDuplicate) {
+      ignored += 1;
+      continue;
+    }
+    rows.push(toDb(prospect));
+    if (email) seenEmails.add(email);
+    if (site) seenSites.add(site);
+  }
+
+  if (!rows.length) return { added: 0, ignored };
+  const { error } = await supabase.from('prospects').insert(rows);
+  if (!error) return { added: rows.length, ignored };
+  if (!isDuplicateError(error)) throw new Error(error.message);
+
+  let added = 0;
+  for (const row of rows) {
+    const { error: rowError } = await supabase.from('prospects').insert(row);
+    if (!rowError) added += 1;
+    else if (isDuplicateError(rowError)) ignored += 1;
+    else throw new Error(rowError.message);
+  }
+  return { added, ignored };
 }
 
 async function handler(req, res) {
@@ -151,10 +188,10 @@ async function handler(req, res) {
     const safeItems = Array.isArray(items) ? items : [];
     progress.push(`${safeItems.length} results found`);
     const prospects = safeItems.map((item) => apifyItemToProspect(item, criteria));
-    const insertedCount = await insertProspects(prospects);
-    progress.push(`${insertedCount} prospects inserted`);
+    const insertResult = await insertProspects(prospects);
+    progress.push(`${insertResult.added} nouveaux prospects ajoutés, ${insertResult.ignored} doublons ignorés`);
 
-    return res.status(200).json({ prospects, query: input.searchStringsArray[0], itemsCount: safeItems.length, insertedCount, actorId, progress });
+    return res.status(200).json({ prospects, query: input.searchStringsArray[0], itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
   } catch (error) {
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', actorId, progress });
   }

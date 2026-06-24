@@ -48,8 +48,9 @@ export default function App() {
     setProspects((current) => { result = mergeProspects(current, incoming); return result.prospects; });
     return result;
   };
-  const addProspects = () => importProspects(mockProspectSearch(criteria));
-  const importCsv = (source: 'CSV' | 'Shopify' | 'TikTok Shop') => importProspects(parseCsvProspects(importText, source));
+  const formatImportSummary = (added: number, ignored: number) => `${added} nouveaux prospects ajoutés, ${ignored} doublons ignorés`;
+  const addProspects = () => { const result = importProspects(mockProspectSearch(criteria)); setApifyMessages([formatImportSummary(result.added, result.merged)]); };
+  const importCsv = (source: 'CSV' | 'Shopify' | 'TikTok Shop') => { const result = importProspects(parseCsvProspects(importText, source)); setApifyMessages([formatImportSummary(result.added, result.merged)]); };
   const addApifyMessage = (message: string) => setApifyMessages((current) => [...current, message]);
   const runApify = async () => {
     setApifyMessages([]);
@@ -62,7 +63,7 @@ export default function App() {
       } else {
         const merged = mergeProspects(prospects, result.prospects);
         setProspects(merged.prospects);
-        addApifyMessage(`${merged.added} prospects ajoutés localement${merged.merged ? ` · ${merged.merged} doublons fusionnés` : ''}`);
+        addApifyMessage(formatImportSummary(merged.added, merged.merged));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur Apify inconnue';
