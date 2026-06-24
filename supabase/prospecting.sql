@@ -24,8 +24,10 @@ create table if not exists prospects (
   pays text not null default 'France',
   score integer not null default 1 check (score between 1 and 10),
   classement text not null default 'faible' check (classement in ('chaud','moyen','faible')),
-  statut_contact text not null default 'nouveau' check (statut_contact in ('nouveau','contacte','reponse','relance','supprime')),
+  statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+2','Relance J+5','Client signé','Supprimé')),
   volume_signaux text[] not null default '{}',
+  source text not null default 'CSV' check (source in ('Apify','Shopify','TikTok Shop','CSV','Démo')),
+  source_url text,
   rgpd_source_publique boolean not null default true,
   rgpd_opt_out boolean not null default false,
   notes text,
@@ -77,5 +79,7 @@ create table if not exists interactions (
 );
 
 create index if not exists prospects_classement_idx on prospects(classement);
-create index if not exists prospects_next_follow_up_idx on prospects(next_follow_up_at) where statut_contact <> 'supprime';
+create index if not exists prospects_next_follow_up_idx on prospects(next_follow_up_at) where statut_contact <> 'Supprimé';
+create unique index if not exists prospects_dedupe_email_idx on prospects (lower(email)) where email is not null;
+create unique index if not exists prospects_dedupe_site_idx on prospects (lower(regexp_replace(site_web, '^https?://(www\.)?', ''))) where site_web is not null;
 create index if not exists relances_due_idx on relances(due_at, statut);
