@@ -12,6 +12,9 @@ export type Prospect = {
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
+export type ApifyImportResult = { prospects: Prospect[]; query: string };
+
+const DEFAULT_APIFY_MAX_ITEMS = 25;
 
 const nowIso = () => new Date().toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOString();
@@ -19,8 +22,8 @@ const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOSt
 export const prospectStatuses: ContactStatus[] = ['Nouveau', 'Contacté', 'Relance J+2', 'Relance J+5', 'Client signé'];
 
 export function dedupeKey(input: Partial<Prospect>) {
-  const first = [input.email, input.siteWeb, input.instagram, input.tiktok, input.nomBoutique].find(Boolean) ?? crypto.randomUUID();
-  return String(first).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[@/\s]+$/g, '').trim();
+  const first = [input.email, input.telephone, input.siteWeb, input.instagram, input.tiktok, input.nomBoutique].find(Boolean) ?? crypto.randomUUID();
+  return String(first).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[^a-z0-9@.+-]+/g, '').trim();
 }
 
 export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
@@ -64,11 +67,74 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
   });
 }
 
-export async function fetchApifyProspects(actorId: string, token: string, input: Record<string, unknown>) {
-  const res = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
-  if (!res.ok) throw new Error(`Apify ${res.status}`);
+const asCleanString = (value: unknown) => typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
+const firstString = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => asCleanString(item[key])).find(Boolean) ?? '';
+const firstNumber = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+
+export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
+  const platform = criteria.platform !== 'Toutes' ? criteria.platform : 'boutique e-commerce';
+  const product = criteria.productType || 'colis expédition';
+  const location = criteria.location || 'Montpellier';
+  const baseQuery = [criteria.keywords, platform, product, location].filter(Boolean).join(' ');
+  const searchStringsArray = Array.from(new Set([baseQuery, `${platform} ${location}`, `boutique colis expédition ${location}`].filter(Boolean)));
+
+  return {
+    searchStringsArray,
+    locationQuery: location,
+    maxCrawledPlacesPerSearch: maxItems,
+    maxImages: 0,
+    language: 'fr',
+    scrapePlaceDetailPage: true,
+    scrapeTableReservationProvider: false,
+    scrapeDirectories: false,
+    includeWebResults: false,
+  };
+}
+
+export function apifyItemToProspect(item: Record<string, unknown>, criteria: SearchCriteria): Prospect {
+  const name = firstString(item, ['title', 'name', 'placeName', 'shopName']) || 'Prospect Apify';
+  const website = firstString(item, ['website', 'websiteUrl', 'siteWeb', 'url']);
+  const email = firstString(item, ['email', 'emailAddress', 'contactEmail']);
+  const phone = firstString(item, ['phone', 'phoneNumber', 'telephone', 'internationalPhoneNumber']);
+  const address = firstString(item, ['address', 'street', 'formattedAddress']);
+  const city = firstString(item, ['city', 'municipality', 'location']) || criteria.location || 'France';
+  const category = firstString(item, ['categoryName', 'category', 'categories', 'subTitle']) || criteria.productType || 'e-commerce';
+  const rating = firstNumber(item, ['totalScore', 'rating', 'stars']);
+  const reviews = firstNumber(item, ['reviewsCount', 'reviews', 'reviewCount']);
+  const sourceUrl = firstString(item, ['url', 'placeUrl', 'googleMapsUrl', 'searchPageUrl']) || website;
+  const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
+
+  return normalizeProspect({
+    nomBoutique: name,
+    siteWeb: website,
+    email,
+    telephone: phone,
+    plateforme: platform as Platform,
+    typeProduits: category,
+    ville: city,
+    pays: 'France',
+    sourceUrl,
+    statutContact: 'Nouveau',
+    volumeSignaux: [
+      'scraping Apify Google Maps',
+      address ? `adresse: ${address}` : '',
+      rating ? `note Google ${rating}/5` : '',
+      reviews ? `${reviews} avis Google` : '',
+    ].filter(Boolean),
+    notes: [`Importé via Apify Google Maps`, address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n'),
+  }, 'Apify');
+}
+
+export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS): Promise<ApifyImportResult> {
+  const cleanActorId = actorId.trim() || 'compass/crawler-google-places';
+  const cleanToken = token.trim();
+  if (!cleanToken) throw new Error('Erreur token Apify');
+  const input = buildApifyGoogleMapsInput(criteria, maxItems);
+  const res = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(cleanActorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(cleanToken)}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
+  if (res.status === 401 || res.status === 403) throw new Error('Erreur token Apify');
+  if (!res.ok) throw new Error(`Erreur Apify (${res.status})`);
   const items = await res.json() as Array<Record<string, unknown>>;
-  return items.map((item) => normalizeProspect({ nomBoutique: String(item.name ?? item.title ?? item.shopName ?? 'Prospect Apify'), siteWeb: String(item.url ?? item.website ?? ''), email: String(item.email ?? ''), telephone: String(item.phone ?? ''), plateforme: String(item.platform ?? 'Inconnue') as Platform, typeProduits: String(item.category ?? item.description ?? 'e-commerce'), ville: String(item.city ?? item.location ?? 'France'), sourceUrl: String(item.url ?? ''), volumeSignaux: ['scraping Apify', item.reviews ? `${item.reviews} avis` : '', item.followers ? `${item.followers} abonnés` : ''].filter(Boolean) as string[], notes: 'Importé via Apify' }, 'Apify'));
+  return { prospects: items.map((item) => apifyItemToProspect(item, criteria)), query: input.searchStringsArray[0] };
 }
 
 export function generateMessage(prospect: Prospect, step: 0 | 2 | 5 | 10 = 0) { const firstLine = prospect.typeProduits ? `J’ai vu votre boutique ${prospect.nomBoutique} autour de ${prospect.typeProduits}.` : `J’ai vu votre boutique ${prospect.nomBoutique}.`; const local = prospect.ville ? ` depuis Montpellier / Lavérune / Le Crès vers vos clients` : ' depuis Montpellier / Lavérune / Le Crès'; const base = `${firstLine}\n\nChez Colock-Gistik, nous aidons les vendeurs e-commerce à externaliser la réception marchandise, le stockage, la préparation colis, l’emballage et l’expédition multi-transporteurs${local}.\n\nSi vous expédiez régulièrement des colis, je peux vous proposer une solution simple pour gagner du temps sans recruter ni louer plus d’espace.\n\nEst-ce que je peux vous envoyer une estimation rapide adaptée à vos volumes ?\n\nBonne journée,\nL’équipe Colock-Gistik`; const relances: Record<number, string> = { 2: `Bonjour,\n\nJe me permets une relance rapide concernant ${prospect.nomBoutique}. Si vos commandes augmentent, Colock-Gistik peut prendre en charge stockage, préparation et expédition depuis la métropole de Montpellier.\n\nSouhaitez-vous que je vous envoie une proposition courte ?`, 5: `Bonjour,\n\nJe reviens vers vous une dernière fois cette semaine. Nous accompagnons des petites marques e-commerce qui veulent expédier plus vite sans gérer l’entrepôt au quotidien.\n\nSi ce n’est pas le bon moment, dites-le moi et je ne vous relancerai pas.`, 10: `Bonjour,\n\nJe clôture ma prise de contact pour ${prospect.nomBoutique}. Si vous cherchez plus tard une solution de stockage, préparation colis et expédition multi-transporteurs à Montpellier, vous pouvez me répondre ici.\n\nBonne continuation !` }; return step === 0 ? base : relances[step]; }
