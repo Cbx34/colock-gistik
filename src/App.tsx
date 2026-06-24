@@ -1,76 +1,45 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Download, ExternalLink, Mail, Plus, RefreshCw, Search as SearchIcon, ShieldCheck, Trash2 } from 'lucide-react';
 import Layout, { type PageKey } from './components/Layout';
-import Dashboard from './pages/Dashboard';
-import Receptions from './pages/Receptions';
-import Stock from './pages/Stock';
-import Preparations from './pages/Preparations';
-import Expeditions from './pages/Expeditions';
-import Clients from './pages/Clients';
-import Search from './pages/Search';
-import History from './pages/History';
+import { buildSearchLinks, followUpDays, generateMessage, mockProspectSearch, scoreProspect, type Platform, type Prospect, type SearchCriteria } from './lib/prospecting';
+import { exportProspectsCsv, loadProspects, saveProspects } from './lib/storage';
 
-const pages: Record<PageKey, { title: string; subtitle: string; element: ReactNode }> = {
-  dashboard: {
-    title: 'Tableau de bord',
-    subtitle: 'Vue temps réel des flux Colock-Box : réception, stock, préparation et expédition.',
-    element: <Dashboard />,
-  },
-  receptions: {
-    title: 'Réceptions',
-    subtitle: 'Contrôlez les arrivages, les quais, les anomalies et les validations de palettes.',
-    element: <Receptions />,
-  },
-  stock: {
-    title: 'Stock',
-    subtitle: 'Pilotez les emplacements, les niveaux, les alertes et les mouvements internes.',
-    element: <Stock />,
-  },
-  preparations: {
-    title: 'Préparations',
-    subtitle: 'Organisez les vagues, le picking, le contrôle qualité et la mise à quai.',
-    element: <Preparations />,
-  },
-  expeditions: {
-    title: 'Expéditions',
-    subtitle: 'Suivez les départs transporteurs, les documents, les preuves et les retards.',
-    element: <Expeditions />,
-  },
-  clients: {
-    title: 'Clients',
-    subtitle: 'Centralisez les comptes clients, les SLA, les volumes et les contacts opérationnels.',
-    element: <Clients />,
-  },
-  search: {
-    title: 'Recherche',
-    subtitle: 'Retrouvez rapidement une commande, une palette, un client ou un transporteur.',
-    element: <Search />,
-  },
-  history: {
-    title: 'Historique',
-    subtitle: 'Consultez les événements critiques et les traces de modification de la plateforme.',
-    element: <History />,
-  },
-};
+function Stat({ label, value }: { label: string; value: ReactNode }) { return <div className="stat-card"><strong>{value}</strong><span>{label}</span></div>; }
+function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span>; }
 
-function getInitialPage(): PageKey {
-  const key = window.location.hash.replace('#', '') as PageKey;
-  return key in pages ? key : 'dashboard';
+const platforms: Array<SearchCriteria['platform']> = ['Toutes', 'Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'eBay', 'Dropshipping', 'Marque e-commerce'];
+
+function ProspectCard({ p, onSelect, onDelete, onContact }: { p: Prospect; onSelect: () => void; onDelete: () => void; onContact: () => void }) {
+  return <article className="prospect-card"><div><h3>{p.nomBoutique}</h3><p>{p.typeProduits} · {p.ville}, {p.pays}</p><div className="chips"><Badge tone={p.classement}>{p.classement}</Badge><Badge>{p.plateforme}</Badge><Badge>Score {p.score}/10</Badge></div></div><ul>{p.volumeSignaux.map((s) => <li key={s}>{s}</li>)}</ul><div className="card-actions"><button onClick={onSelect}>Ouvrir</button><button onClick={onContact}><Mail size={17}/> Contacté</button><button className="secondary danger" onClick={onDelete}><Trash2 size={17}/> Supprimer</button></div></article>;
 }
 
 export default function App() {
-  const [activePage, setActivePage] = useState<PageKey>(getInitialPage);
+  const [activePage, setActivePage] = useState<PageKey>(() => (window.location.hash.replace('#', '') as PageKey) || 'dashboard');
+  const [prospects, setProspects] = useState<Prospect[]>(loadProspects);
+  const [selectedId, setSelectedId] = useState<string>('');
+  const selected = prospects.find((p) => p.id === selectedId) ?? prospects[0];
+  const [criteria, setCriteria] = useState<SearchCriteria>({ platform: 'Toutes', productType: '', location: 'Montpellier', keywords: 'boutique colis expédition' });
 
-  useEffect(() => {
-    const onHashChange = () => setActivePage(getInitialPage());
-    window.addEventListener('hashchange', onHashChange);
-    return () => window.removeEventListener('hashchange', onHashChange);
-  }, []);
+  useEffect(() => { const fn = () => setActivePage((window.location.hash.replace('#', '') as PageKey) || 'dashboard'); window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); }, []);
+  useEffect(() => saveProspects(prospects), [prospects]);
 
-  const current = useMemo(() => pages[activePage], [activePage]);
+  const metrics = useMemo(() => ({ found: prospects.filter((p) => p.statutContact !== 'supprime').length, contacted: prospects.filter((p) => ['contacte','relance','reponse'].includes(p.statutContact)).length, replies: prospects.filter((p) => p.statutContact === 'reponse').length, followups: prospects.filter((p) => p.nextFollowUpAt && new Date(p.nextFollowUpAt) <= new Date(Date.now() + 10 * 86400000)).length }), [prospects]);
+  const addProspects = () => setProspects((current) => [...mockProspectSearch(criteria), ...current]);
+  const select = (id: string) => { setSelectedId(id); window.location.hash = 'prospect'; };
+  const markContacted = (id: string) => setProspects((list) => list.map((p) => p.id === id ? { ...p, statutContact: 'contacte', lastContactAt: new Date().toISOString(), nextFollowUpAt: new Date(Date.now() + 2 * 86400000).toISOString() } : p));
+  const deleteProspect = (id: string) => setProspects((list) => list.map((p) => p.id === id ? { ...p, statutContact: 'supprime', notes: `${p.notes ?? ''}\nSuppression demandée / opt-out.` } : p));
+  const updateSelected = (patch: Partial<Prospect>) => selected && setProspects((list) => list.map((p) => p.id === selected.id ? { ...p, ...patch, ...scoreProspect({ ...p, ...patch }) } : p));
 
-  return (
-    <Layout activePage={activePage} title={current.title} subtitle={current.subtitle}>
-      {current.element}
-    </Layout>
-  );
+  const pages: Record<PageKey, { title: string; subtitle: string; element: ReactNode }> = {
+    dashboard: { title: 'Prospection automatique Colock-Gistik', subtitle: 'MVP simple pour trouver, scorer, contacter et relancer des vendeurs e-commerce.', element: <div className="page-grid"><section className="orange-hero"><div><span className="pill">Stockage · Préparation · Expédition</span><h2>Pipeline commercial e-commerce</h2><p>Centralisez les boutiques Shopify, Vinted Pro, TikTok Shop, Etsy, eBay, dropshippers et petites marques françaises à prospecter.</p></div><a className="big-action" href="#search"><Plus/> Lancer une recherche</a></section><div className="stats-grid"><Stat label="prospects trouvés" value={metrics.found}/><Stat label="prospects contactés" value={metrics.contacted}/><Stat label="réponses reçues" value={metrics.replies}/><Stat label="relances à faire" value={metrics.followups}/></div><section className="panel wide-panel"><h3>Priorité du jour</h3>{prospects.filter((p)=>p.classement==='chaud' && p.statutContact!=='supprime').slice(0,4).map((p)=><ProspectCard key={p.id} p={p} onSelect={()=>select(p.id)} onContact={()=>markContacted(p.id)} onDelete={()=>deleteProspect(p.id)}/>)}</section><aside className="panel"><h3><ShieldCheck/> RGPD</h3><p>Données publiques uniquement, pas de spam massif, historique de contact et suppression immédiate via le bouton Supprimer.</p></aside></div> },
+    search: { title: 'Recherche prospects', subtitle: 'Générez des pistes et ouvrez les recherches web/sociales publiques en un clic.', element: <div className="module-page"><div className="form-card"><h3><SearchIcon/> Critères</h3><div className="form-grid"><select value={criteria.platform} onChange={(e)=>setCriteria({...criteria, platform:e.target.value as Platform | 'Toutes'})}>{platforms.map((p)=><option key={p}>{p}</option>)}</select><input placeholder="Type produits" value={criteria.productType} onChange={(e)=>setCriteria({...criteria, productType:e.target.value})}/><input placeholder="Ville / pays" value={criteria.location} onChange={(e)=>setCriteria({...criteria, location:e.target.value})}/><input placeholder="Mots-clés" value={criteria.keywords} onChange={(e)=>setCriteria({...criteria, keywords:e.target.value})}/></div><button onClick={addProspects}><Plus/> Ajouter prospects démo</button></div><div className="card-grid">{buildSearchLinks(criteria).map((l)=><a className="work-card link-card" href={l.url} target="_blank" key={l.label}><ExternalLink/><strong>{l.label}</strong><span>Source publique à vérifier avant import.</span></a>)}</div></div> },
+    prospects: { title: 'Liste prospects', subtitle: 'Classement chaud / moyen / faible selon signaux de volume, contacts publics et proximité.', element: <div className="module-page"><div className="module-actions"><button onClick={()=>exportProspectsCsv(prospects)}><Download/> Export CSV</button></div><div className="prospect-list">{prospects.filter((p)=>p.statutContact!=='supprime').map((p)=><ProspectCard key={p.id} p={p} onSelect={()=>select(p.id)} onContact={()=>markContacted(p.id)} onDelete={()=>deleteProspect(p.id)}/>)}</div></div> },
+    prospect: { title: 'Fiche prospect', subtitle: 'Informations utiles, score, message personnalisé et suppression RGPD.', element: <div className="module-page">{selected ? <><ProspectCard p={selected} onSelect={()=>{}} onContact={()=>markContacted(selected.id)} onDelete={()=>deleteProspect(selected.id)}/><div className="form-card"><h3>Modifier</h3><div className="form-grid"><input value={selected.email ?? ''} placeholder="Email public" onChange={(e)=>updateSelected({email:e.target.value})}/><input value={selected.telephone ?? ''} placeholder="Téléphone public" onChange={(e)=>updateSelected({telephone:e.target.value})}/><input value={selected.siteWeb ?? ''} placeholder="Site web" onChange={(e)=>updateSelected({siteWeb:e.target.value})}/><textarea value={selected.notes ?? ''} onChange={(e)=>updateSelected({notes:e.target.value})}/></div></div><pre className="message-box">{generateMessage(selected)}</pre></> : <p>Aucun prospect.</p>}</div> },
+    messages: { title: 'Messages générés', subtitle: 'Scripts personnalisés pour premier contact et relances.', element: <div className="module-page"><div className="prospect-list">{prospects.filter((p)=>p.statutContact!=='supprime').map((p)=><article className="panel" key={p.id}><h3>{p.nomBoutique}</h3><pre className="message-box">{generateMessage(p)}</pre></article>)}</div></div> },
+    followups: { title: 'Relances', subtitle: 'Séquences automatiques J+2, J+5 et J+10 à envoyer sans spam massif.', element: <div className="module-page"><div className="prospect-list">{prospects.filter((p)=>p.statutContact!=='supprime').map((p)=><article className="panel" key={p.id}><h3><RefreshCw/> {p.nomBoutique}</h3>{followUpDays.map((d)=><details key={d}><summary>Relance J+{d}</summary><pre className="message-box">{generateMessage(p, d as 2|5|10)}</pre></details>)}</article>)}</div></div> },
+    export: { title: 'Export CSV', subtitle: 'Téléchargez les prospects pour CRM, tableur ou import commercial.', element: <div className="module-page"><button className="big-action" onClick={()=>exportProspectsCsv(prospects)}><Download/> Télécharger le CSV</button><p className="notice">Colonnes : nom, site, réseaux, contacts publics, plateforme, produits, ville, score, classement, source.</p></div> },
+    settings: { title: 'Paramètres', subtitle: 'Architecture, Supabase et connecteurs futurs Apify / Octoparse.', element: <div className="module-page"><section className="panel"><h3>Architecture MVP</h3><ol><li>React + localStorage pour test immédiat.</li><li>Schéma SQL Supabase dans <code>supabase/prospecting.sql</code>.</li><li>Scoring et modèles dans <code>src/lib/prospecting.ts</code>.</li><li>Connecteurs web externes ajoutables ensuite via Edge Functions.</li></ol></section><section className="panel"><h3>Ajouter Apify ou Octoparse ensuite</h3><p>Créer une Edge Function Supabase <code>run-prospect-scraper</code>, appeler un actor Apify ou une tâche Octoparse, normaliser le résultat vers <code>prospects</code> et <code>prospect_sources</code>, puis planifier via cron. Garder uniquement les données publiques et limiter les volumes par campagne.</p></section></div> },
+  };
+  const current = pages[activePage] ?? pages.dashboard;
+  return <Layout activePage={activePage in pages ? activePage : 'dashboard'} title={current.title} subtitle={current.subtitle}>{current.element}</Layout>;
 }
