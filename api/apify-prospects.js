@@ -3,6 +3,7 @@ const { createClient } = require('@supabase/supabase-js');
 
 const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
 const DEFAULT_MAX_ITEMS = 25;
+const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google Maps'];
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
 const asNumber = (value, fallback) => {
@@ -24,6 +25,9 @@ const describeError = (error) => {
 const logError = (message, error, context = {}) => {
   console.error(message, { ...context, error: describeError(error) });
 };
+const isGoogleMapsActor = (actorId) => /google[-_~ ]?(maps|places)|crawler[-_~ ]?google[-_~ ]?places/i.test(actorId);
+const resolveRealSource = (platform) => SELECTABLE_SOURCES.includes(platform) ? platform : 'Google Maps';
+
 const normalizeActorId = (actorId) => {
   const normalized = asString(actorId || DEFAULT_ACTOR_ID)
     .replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '')
@@ -65,6 +69,7 @@ function scoreProspect(input) {
 
 function normalizeProspect(draft, source = 'Apify') {
   const scored = scoreProspect(draft);
+  const sourceReelle = draft.sourceReelle || resolveRealSource(draft.plateforme);
   return {
     id: draft.id || randomUUID(),
     nomBoutique: draft.nomBoutique.trim(),
@@ -83,13 +88,14 @@ function normalizeProspect(draft, source = 'Apify') {
     volumeSignaux: draft.volumeSignaux?.filter(Boolean) || [],
     sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '',
     source,
+    sourceReelle,
     notes: draft.notes,
     createdAt: draft.createdAt || nowIso(),
   };
 }
 
 function toDb(p) {
-  return { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
+  return { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, source_reelle: p.sourceReelle, notes: p.notes, created_at: p.createdAt };
 }
 
 function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
@@ -122,7 +128,8 @@ function apifyItemToProspect(item, criteria) {
   const reviews = firstNumber(item, ['reviewsCount', 'reviews', 'reviewCount']);
   const sourceUrl = firstString(item, ['url', 'placeUrl', 'googleMapsUrl', 'searchPageUrl']) || website;
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
-  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, typeProduits: category, ville: city, pays: 'France', sourceUrl, volumeSignaux: ['scraping Apify Google Maps', address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: ['Importé via Apify Google Maps', address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  const sourceReelle = criteria.platform === 'Toutes' ? 'Google Maps' : resolveRealSource(criteria.platform);
+  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, sourceReelle, typeProduits: category, ville: city, pays: 'France', sourceUrl, volumeSignaux: [sourceReelle === 'Google Maps' ? 'scraping Apify Google Maps' : `scraping Apify ${sourceReelle}`, address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: [`Importé via Apify ${sourceReelle}`, address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 async function insertProspects(prospects) {
@@ -191,6 +198,7 @@ async function handler(req, res) {
   const progress = [];
 
   if (!criteria) return res.status(400).json({ error: 'Critères de recherche manquants' });
+  if (criteria.platform === 'Vinted' && isGoogleMapsActor(actorId)) return res.status(400).json({ error: 'Google Maps est interdit lorsque la source Vinted est sélectionnée. Configurez un actor Apify Vinted dédié.' });
   if (!token) return res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
 
   progress.push('Token detected');

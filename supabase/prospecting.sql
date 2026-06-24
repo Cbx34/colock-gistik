@@ -26,8 +26,9 @@ create table if not exists prospects (
   classement text not null default 'faible' check (classement in ('chaud','moyen','faible')),
   statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+2','Relance J+5','Client signé','Supprimé')),
   volume_signaux text[] not null default '{}',
-  source text not null default 'CSV' check (source in ('Apify','Shopify','TikTok Shop','CSV','Démo')),
+  source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
   source_url text,
+  source_reelle text not null default 'Inconnue' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
   rgpd_source_publique boolean not null default true,
   rgpd_opt_out boolean not null default false,
   notes text,
@@ -78,6 +79,13 @@ create table if not exists interactions (
   created_at timestamptz not null default now()
 );
 
+
+alter table prospects add column if not exists source_reelle text not null default 'Inconnue';
+alter table prospects drop constraint if exists prospects_source_check;
+alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
+alter table prospects drop constraint if exists prospects_source_reelle_check;
+alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue'));
+
 create index if not exists prospects_classement_idx on prospects(classement);
 create index if not exists prospects_next_follow_up_idx on prospects(next_follow_up_at) where statut_contact <> 'Supprimé';
 create unique index if not exists prospects_dedupe_email_idx on prospects (lower(email)) where email is not null;
@@ -120,8 +128,9 @@ begin
     classement text not null default 'faible' check (classement in ('chaud','moyen','faible')),
     statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+2','Relance J+5','Client signé','Supprimé')),
     volume_signaux text[] not null default '{}',
-    source text not null default 'CSV' check (source in ('Apify','Shopify','TikTok Shop','CSV','Démo')),
+    source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
     source_url text,
+    source_reelle text not null default 'Inconnue' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
     rgpd_source_publique boolean not null default true,
     rgpd_opt_out boolean not null default false,
     notes text,
@@ -173,6 +182,12 @@ begin
     contenu text not null,
     created_at timestamptz not null default now()
   );
+
+  alter table prospects add column if not exists source_reelle text not null default 'Inconnue';
+  alter table prospects drop constraint if exists prospects_source_check;
+  alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
+  alter table prospects drop constraint if exists prospects_source_reelle_check;
+  alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue'));
 
   create unique index if not exists messages_prospect_sujet_idx on messages(prospect_id, sujet);
   create unique index if not exists relances_prospect_rang_idx on relances(prospect_id, rang);
