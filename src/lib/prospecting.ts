@@ -18,6 +18,8 @@ export type ApifyProgressStep = 'token-detected' | 'actor-started' | 'dataset-re
 export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: number };
 
 const DEFAULT_APIFY_MAX_ITEMS = 25;
+export const DEFAULT_APIFY_GOOGLE_MAPS_ACTOR_ID = 'compass/crawler-google-places';
+export const DEFAULT_APIFY_SHOPIFY_ACTOR_ID = 'drobnikj/shopify-scraper';
 
 const nowIso = () => new Date().toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOString();
@@ -88,6 +90,13 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
 const asCleanString = (value: unknown) => typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
 const firstString = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => asCleanString(item[key])).find(Boolean) ?? '';
 const firstNumber = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+
+export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
+  const product = criteria.productType || 'e-commerce';
+  const location = criteria.location || 'France';
+  const query = [criteria.keywords, product, location, 'Shopify', 'myshopify.com', 'cdn.shopify.com'].filter(Boolean).join(' ');
+  return { query, search: query, searchQuery: query, searchTerms: [query], startUrls: [], maxItems, maxResults: maxItems, country: location, location, language: 'fr', onlyShopify: true, includeEmails: true, includePhones: true };
+}
 
 export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : 'boutique e-commerce';
@@ -162,13 +171,16 @@ function normalizeApifyActorId(actorId: string) {
 }
 
 export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS, onProgress?: (progress: ApifyProgress) => void): Promise<ApifyImportResult> {
-  const cleanActorId = normalizeApifyActorId(actorId || 'compass/crawler-google-places');
-  if ((criteria.platform === 'Vinted' || criteria.platform === 'Shopify') && isGoogleMapsActor(cleanActorId)) throw new Error(`Google Maps est interdit lorsque la source ${criteria.platform} est sélectionnée. Configurez un actor Apify ${criteria.platform} dédié.`);
+  const defaultActor = criteria.platform === 'Shopify' ? DEFAULT_APIFY_SHOPIFY_ACTOR_ID : DEFAULT_APIFY_GOOGLE_MAPS_ACTOR_ID;
+  const requestedActorId = normalizeApifyActorId(actorId || defaultActor);
+  const cleanActorId = criteria.platform === 'Shopify' && isGoogleMapsActor(requestedActorId) ? normalizeApifyActorId(defaultActor) : requestedActorId;
+  if (criteria.platform === 'Shopify' && isGoogleMapsActor(cleanActorId)) throw new Error('Google Maps est interdit pour la source Shopify. Configurez un actor Apify Shopify dédié.');
+  if (criteria.platform === 'Vinted' && isGoogleMapsActor(cleanActorId)) throw new Error(`Google Maps est interdit lorsque la source ${criteria.platform} est sélectionnée. Configurez un actor Apify ${criteria.platform} dédié.`);
   const cleanToken = token.trim();
   const proxyRes = await fetch('/api/apify-prospects', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ actorId: cleanActorId, token: cleanToken || undefined, criteria, maxItems }),
+    body: JSON.stringify(criteria.platform === 'Shopify' ? { shopifyActorId: cleanActorId, token: cleanToken || undefined, criteria, maxItems } : { actorId: cleanActorId, token: cleanToken || undefined, criteria, maxItems }),
   });
   if (!proxyRes.ok) throw new Error(await readApifyError(proxyRes));
   const result = await proxyRes.json() as ApifyImportResult;
