@@ -8,20 +8,23 @@ const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google 
 const REQUIRED_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
 
 const ECOMMERCE_KEYWORD_LIBRARY = [
-  { category: 'MODE', keywords: ['vêtements','chaussures','sneakers','maroquinerie','sacs','bijoux','montres','lunettes','casquettes','accessoires mode','lingerie','robe','costume','streetwear','sportswear'] },
-  { category: 'BEAUTÉ', keywords: ['cosmétiques','maquillage','parfum','soins visage','soins corps','savon','shampoing','barbier','beauté bio','ongles'] },
-  { category: 'MAISON', keywords: ['décoration','mobilier','linge de maison','bougies','art de la table','cuisine','rangement','jardin','plantes'] },
-  { category: 'SPORT', keywords: ['fitness','musculation','crossfit','running','cyclisme','randonnée','yoga','natation','tennis','football'] },
-  { category: 'ANIMAUX', keywords: ['animalerie','chien','chat','aquarium','accessoires animaux'] },
-  { category: 'ENFANTS', keywords: ['jouets','bébé','puériculture','jeux éducatifs'] },
-  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','objets connectés'] },
-  { category: 'ALIMENTAIRE', keywords: ['épicerie','café','thé','compléments alimentaires','nutrition sportive'] },
-  { category: 'LOISIRS', keywords: ['manga','cartes pokemon','figurines','jeux de société','collection'] },
-  { category: 'AUTO MOTO', keywords: ['accessoires auto','accessoires moto'] },
-  { category: 'B2B', keywords: ['emballage','fournitures bureau','équipements professionnels','artisanat'] },
+  { category: 'MODE', keywords: ['vêtement','vêtements','vêtements femme','vêtements homme','robe','robe femme','pantalon','jean','chemise','t-shirt','tee-shirt','sweat','pull','veste','manteau','lingerie','sous-vêtements','chaussures','baskets','sneakers','sac','sacs','maroquinerie','montre','montres','bijoux','lunettes','accessoires','accessoires mode','mode femme','mode homme','prêt-à-porter','pret a porter','streetwear','sportswear','costume','casquettes'] },
+  { category: 'BEAUTÉ', keywords: ['cosmétique','cosmétiques','maquillage','parfum','soins visage','soins corps','crème','huile','beauté bio','skincare','savon','shampoing','coiffure','esthétique','ongles','bien-être','barbier'] },
+  { category: 'MAISON', keywords: ['décoration','meuble','meubles','cuisine','salle de bain','rangement','textile maison','linge de maison','jardin','bricolage','éclairage','mobilier','bougies','art de la table','plantes'] },
+  { category: 'SPORT', keywords: ['fitness','musculation','yoga','running','vélo','cyclisme','randonnée','crossfit','sportwear','sportswear','nutrition sportive','natation','tennis','football'] },
+  { category: 'ANIMAUX', keywords: ['chien','chat','animalerie','accessoires animaux','alimentation chien','alimentation chat','aquarium'] },
+  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','électronique','domotique','objets connectés'] },
+  { category: 'ALIMENTAIRE', keywords: ['épicerie','bio','complément alimentaire','compléments alimentaires','nutrition','thé','café'] },
+  { category: 'ENFANTS', keywords: ['bébé','jouets','puériculture','vêtements enfant','jeux éducatifs'] },
+  { category: 'AUTO MOTO', keywords: ['automobile','moto','accessoires auto','accessoires moto'] },
+  { category: 'B2B', keywords: ['grossiste','fournisseur','industriel','matériel professionnel','emballage','fournitures bureau','équipements professionnels','artisanat'] },
 ];
+const QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY = 1000;
 const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ keywords }) => keywords.map((keyword) => `${keyword} France`));
 const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES;
+const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) => Math.max(1, Math.ceil(target / Math.max(1, keywordCount)));
+const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
+const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && asString(prospect.email) && hasRequiredSocial(prospect));
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
 const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service'];
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -42,7 +45,7 @@ const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:
 const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
 const PROSPECT_CHECK_CONSTRAINTS = {
-  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
+  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 20' },
   prospects_classement_check: { column: 'classement', allowed: 'chaud, moyen, faible' },
   prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
   prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
@@ -122,12 +125,13 @@ function scoreProspect(input) {
   const haystack = `${input.pays || ''} ${input.ville || ''} ${signals.join(' ')} ${input.notes || ''}`;
   let score = 0;
   if (input.email) score += 5;
-  if (input.telephone) score += 3;
-  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 5;
-  if (input.shopifyVerified) score += 3;
-  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 5;
-  if (input.instagram || input.facebook) score += 5;
-  return { score, classement: score >= 18 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
+  if (input.telephone) score += 2;
+  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 4;
+  if (input.shopifyVerified) score += 4;
+  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 2;
+  if (input.instagram || input.facebook) score += 3;
+  score = Math.min(20, score);
+  return { score, classement: score >= 16 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
 }
 
 function normalizeProspect(draft, source = 'Apify') {
@@ -223,8 +227,10 @@ function buildApifyShopifyInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
     onlyShopify: true,
     includeEmails: true,
     includePhones: true,
-    requireEmail: false,
+    requireEmail: true,
+    requireSocial: true,
     requireProducts: true,
+    qualificationRules: ['shopify_verified', 'email_found', 'instagram_or_facebook', 'france_priority'],
   };
 }
 
@@ -523,6 +529,8 @@ async function handler(req, res) {
     }));
     prospects = filterFranceProspects(prospects, criteria);
     progress.push(`${prospects.length} prospects Shopify normalisés après filtre France`);
+    prospects = prospects.filter(isQualifiedShopifyProspect);
+    progress.push(`${prospects.length} prospects qualifiés conservés (Shopify vérifié + email + Instagram/Facebook, France prioritaire)`);
     const insertResult = await insertProspects(prospects);
     progress.push(`${insertResult.added} prospects insérés exactement dans Supabase, ${insertResult.ignored} doublons ignorés`);
 
