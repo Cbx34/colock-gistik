@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabase } from './supabase';
-import { defaultCampaigns, followUpDays, generateMessage, mergeProspects, normalizeProspect, type Campaign, type Prospect } from './prospecting';
+import { defaultCampaigns, followUpDays, generateMessage, mergeProspects, normalizeProspect, sortProspects, type Campaign, type Prospect } from './prospecting';
 
 export type SupabaseConnectionState = {
   connected: boolean;
@@ -12,13 +12,15 @@ const schemaError = 'Supabase n’est pas configuré. Ajoutez VITE_SUPABASE_URL 
 
 const SOURCE_REELLE_DEFAULT: Prospect['sourceReelle'] = 'Google Maps';
 let sourceReelleColumnAvailable = true;
+let shopifyVerifiedColumnAvailable = true;
 
 const toDb = (p: Prospect, includeSourceReelle = sourceReelleColumnAvailable) => {
   const row: Record<string, unknown> = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, last_contact_at: p.lastContactAt, next_follow_up_at: p.nextFollowUpAt, campagne_id: p.campaignId, created_at: p.createdAt };
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || SOURCE_REELLE_DEFAULT;
+  if (shopifyVerifiedColumnAvailable) row.shopify_verified = p.shopifyVerified ?? false;
   return row;
 };
-const fromDb = (r: Record<string, unknown>) => normalizeProspect({ id: String(r.id), nomBoutique: String(r.nom_boutique), siteWeb: r.site_web as string, instagram: r.instagram as string, tiktok: r.tiktok as string, linkedin: r.linkedin as string, email: r.email as string, telephone: r.telephone as string, plateforme: r.plateforme as Prospect['plateforme'], typeProduits: r.type_produits as string, ville: r.ville as string, pays: r.pays as string, score: r.score as number, classement: r.classement as Prospect['classement'], statutContact: r.statut_contact as Prospect['statutContact'], volumeSignaux: (r.volume_signaux as string[]) ?? [], sourceUrl: r.source_url as string, source: r.source as Prospect['source'], sourceReelle: (r.source_reelle as Prospect['sourceReelle']) ?? SOURCE_REELLE_DEFAULT, notes: r.notes as string, lastContactAt: r.last_contact_at as string, nextFollowUpAt: r.next_follow_up_at as string, campaignId: r.campagne_id as string, createdAt: r.created_at as string }, (r.source as Prospect['source']) ?? 'CSV');
+const fromDb = (r: Record<string, unknown>) => normalizeProspect({ id: String(r.id), nomBoutique: String(r.nom_boutique), siteWeb: r.site_web as string, instagram: r.instagram as string, tiktok: r.tiktok as string, linkedin: r.linkedin as string, email: r.email as string, telephone: r.telephone as string, plateforme: r.plateforme as Prospect['plateforme'], typeProduits: r.type_produits as string, ville: r.ville as string, pays: r.pays as string, score: r.score as number, classement: r.classement as Prospect['classement'], statutContact: r.statut_contact as Prospect['statutContact'], volumeSignaux: (r.volume_signaux as string[]) ?? [], sourceUrl: r.source_url as string, source: r.source as Prospect['source'], sourceReelle: (r.source_reelle as Prospect['sourceReelle']) ?? SOURCE_REELLE_DEFAULT, shopifyVerified: r.shopify_verified === true, notes: r.notes as string, lastContactAt: r.last_contact_at as string, nextFollowUpAt: r.next_follow_up_at as string, campaignId: r.campagne_id as string, createdAt: r.created_at as string }, (r.source as Prospect['source']) ?? 'CSV');
 
 const normalizeSite = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
 const normalizeEmail = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -34,14 +36,20 @@ function isMissingTable(message: string) {
   return /does not exist|schema cache|Could not find the table|relation .* does not exist/i.test(message);
 }
 
+function isMissingShopifyVerifiedColumn(error: unknown) {
+  const maybe = error as { message?: string; details?: string; hint?: string; code?: string };
+  return maybe?.code === 'PGRST204' || /shopify_verified|schema cache|Could not find .* column/i.test([maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' '));
+}
+
 function isMissingSourceReelleColumn(error: unknown) {
   const maybe = error as { message?: string; details?: string; hint?: string; code?: string };
   return maybe?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' '));
 }
 
 async function refreshSourceReelleColumnState() {
-  const probe = await supabase.from('prospects').select('source_reelle').limit(1);
+  const probe = await supabase.from('prospects').select('source_reelle,shopify_verified').limit(1);
   sourceReelleColumnAvailable = !probe.error || !isMissingSourceReelleColumn(probe.error);
+  shopifyVerifiedColumnAvailable = !probe.error || !isMissingShopifyVerifiedColumn(probe.error);
 }
 
 export async function ensureProspectingSchema() {
@@ -64,8 +72,12 @@ export async function ensureProspectingSchema() {
 export async function loadProspectingData() {
   await ensureProspectingSchema();
   await refreshSourceReelleColumnState();
+  const prospectsQuery = supabase.from('prospects').select('*');
+  const orderedProspectsQuery = shopifyVerifiedColumnAvailable
+    ? prospectsQuery.order('shopify_verified', { ascending: false }).order('score', { ascending: false })
+    : prospectsQuery.order('score', { ascending: false });
   const [prospectsResult, campaignsResult] = await Promise.all([
-    supabase.from('prospects').select('*').order('score', { ascending: false }),
+    orderedProspectsQuery,
     supabase.from('campagnes').select('*').order('created_at', { ascending: false }),
   ]);
   if (prospectsResult.error) throw prospectsResult.error;
@@ -75,7 +87,7 @@ export async function loadProspectingData() {
   if (campaigns.length === 0) await saveCampaignsToSupabase(defaultCampaigns());
 
   return {
-    prospects: (prospectsResult.data ?? []).map(fromDb),
+    prospects: sortProspects((prospectsResult.data ?? []).map(fromDb)),
     campaigns: campaigns.length ? campaigns : defaultCampaigns(),
   };
 }
@@ -105,6 +117,7 @@ export async function saveProspectsToSupabase(prospects: Prospect[]) {
     if (site) rowBySite.set(site, String(row.id));
   }
   const writableProspects = prospects.filter((prospect) => {
+    if ((prospect.plateforme === 'Shopify' || prospect.sourceReelle === 'Shopify') && !prospect.shopifyVerified) return false;
     const emailOwner = rowByEmail.get(normalizeEmail(prospect.email));
     const siteOwner = rowBySite.get(normalizeSite(prospect.siteWeb));
     return (!emailOwner || emailOwner === prospect.id) && (!siteOwner || siteOwner === prospect.id);
@@ -113,6 +126,12 @@ export async function saveProspectsToSupabase(prospects: Prospect[]) {
   if (!writableProspects.length) return;
   let rows = writableProspects.map((prospect) => toDb(prospect));
   let { error } = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
+  if (error && isMissingShopifyVerifiedColumn(error)) {
+    shopifyVerifiedColumnAvailable = false;
+    rows = writableProspects.map((prospect) => toDb(prospect));
+    const retry = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
+    error = retry.error;
+  }
   if (error && isMissingSourceReelleColumn(error)) {
     sourceReelleColumnAvailable = false;
     rows = writableProspects.map((prospect) => toDb(prospect, false));

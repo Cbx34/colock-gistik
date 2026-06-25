@@ -7,7 +7,7 @@ export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google
 export type Prospect = {
   id: string; nomBoutique: string; siteWeb?: string; instagram?: string; tiktok?: string; linkedin?: string; email?: string; telephone?: string;
   plateforme: Platform; typeProduits: string; ville: string; pays: string; score: number; classement: Ranking; statutContact: ContactStatus;
-  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
+  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
 };
 
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
@@ -36,6 +36,7 @@ export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: strin
   if (input.email) score += 1;
   if (input.telephone) score += 1;
   if (input.siteWeb) score += 1;
+  if (input.shopifyVerified) score += 2;
   if (['Shopify', 'TikTok Shop', 'Etsy', 'eBay', 'Vinted'].includes(String(input.plateforme))) score += 1;
   if ((input.ville ?? '').toLowerCase().match(/montpellier|lavérune|laverune|le crès|le cres|nîmes|nimes|sète|sete|béziers|beziers|occitanie/)) score += 1;
   if (input.statutContact === 'Client signé') score += 2;
@@ -55,7 +56,7 @@ export function isGoogleMapsActor(actorId: string) {
 export function normalizeProspect(draft: ProspectImportDraft, source: ImportSource = 'CSV'): Prospect {
   const scored = scoreProspect(draft);
   const sourceReelle = draft.sourceReelle ?? resolveRealSource(source === 'Apify' ? draft.plateforme ?? 'Inconnue' : source);
-  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
+  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
 }
 
 export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
@@ -67,7 +68,11 @@ export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
     if (current) { byKey.set(key, { ...current, ...prospect, id: current.id, volumeSignaux: Array.from(new Set([...current.volumeSignaux, ...prospect.volumeSignaux])), notes: [current.notes, prospect.notes].filter(Boolean).join('\n') }); merged += 1; }
     else { byKey.set(key, prospect); added += 1; }
   }
-  return { prospects: Array.from(byKey.values()).sort((a,b)=>b.score-a.score), added, merged };
+  return { prospects: sortProspects(Array.from(byKey.values())), added, merged };
+}
+
+export function sortProspects(prospects: Prospect[]) {
+  return [...prospects].sort((a, b) => Number(b.shopifyVerified) - Number(a.shopifyVerified) || b.score - a.score);
 }
 
 export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
@@ -76,7 +81,7 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
   return lines.map((line) => {
     const cells = line.match(/("(?:""|[^"])*"|[^,]+)/g)?.map((c)=>c.replace(/^"|"$/g, '').replaceAll('""','"').trim()) ?? [];
     const get = (...names: string[]) => cells[headers.findIndex((h)=>names.includes(h))] || '';
-    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), tiktok: get('tiktok'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), notes: `Import ${source}` }, source);
+    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), tiktok: get('tiktok'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), shopifyVerified: get('shopify_verified','shopifyVerified') === 'true', notes: `Import ${source}` }, source);
   });
 }
 
@@ -116,7 +121,7 @@ export function apifyItemToProspect(item: Record<string, unknown>, criteria: Sea
   const reviews = firstNumber(item, ['reviewsCount', 'reviews', 'reviewCount']);
   const sourceUrl = firstString(item, ['url', 'placeUrl', 'googleMapsUrl', 'searchPageUrl']) || website;
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
-  const sourceReelle = criteria.platform === 'Toutes' ? 'Google Maps' : resolveRealSource(criteria.platform);
+  const sourceReelle = criteria.platform === 'Toutes' ? 'Inconnue' : resolveRealSource(criteria.platform);
 
   return normalizeProspect({
     nomBoutique: name,
@@ -130,6 +135,7 @@ export function apifyItemToProspect(item: Record<string, unknown>, criteria: Sea
     pays: 'France',
     sourceUrl,
     statutContact: 'Nouveau',
+    shopifyVerified: false,
     volumeSignaux: [
       sourceReelle === 'Google Maps' ? 'scraping Apify Google Maps' : `scraping Apify ${sourceReelle}`,
       address ? `adresse: ${address}` : '',
@@ -157,7 +163,7 @@ function normalizeApifyActorId(actorId: string) {
 
 export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS, onProgress?: (progress: ApifyProgress) => void): Promise<ApifyImportResult> {
   const cleanActorId = normalizeApifyActorId(actorId || 'compass/crawler-google-places');
-  if (criteria.platform === 'Vinted' && isGoogleMapsActor(cleanActorId)) throw new Error('Google Maps est interdit lorsque la source Vinted est sélectionnée. Configurez un actor Apify Vinted dédié.');
+  if ((criteria.platform === 'Vinted' || criteria.platform === 'Shopify') && isGoogleMapsActor(cleanActorId)) throw new Error(`Google Maps est interdit lorsque la source ${criteria.platform} est sélectionnée. Configurez un actor Apify ${criteria.platform} dédié.`);
   const cleanToken = token.trim();
   const proxyRes = await fetch('/api/apify-prospects', {
     method: 'POST',
