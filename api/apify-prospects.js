@@ -4,6 +4,8 @@ const { createClient } = require('@supabase/supabase-js');
 const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
 const DEFAULT_MAX_ITEMS = 25;
 const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google Maps'];
+const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i, /Shopify\.theme/i, /window\.Shopify/i];
+const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
 const asNumber = (value, fallback) => {
@@ -61,6 +63,7 @@ function scoreProspect(input) {
   if (input.email) score += 1;
   if (input.telephone) score += 1;
   if (input.siteWeb) score += 1;
+  if (input.shopifyVerified) score += 2;
   if (['Shopify', 'TikTok Shop', 'Etsy', 'eBay', 'Vinted'].includes(String(input.plateforme))) score += 1;
   if ((input.ville || '').toLowerCase().match(/montpellier|lavérune|laverune|le crès|le cres|nîmes|nimes|sète|sete|béziers|beziers|occitanie/)) score += 1;
   const finalScore = Math.max(1, Math.min(10, score));
@@ -89,6 +92,7 @@ function normalizeProspect(draft, source = 'Apify') {
     sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '',
     source,
     sourceReelle,
+    shopifyVerified: draft.shopifyVerified || false,
     notes: draft.notes,
     createdAt: draft.createdAt || nowIso(),
   };
@@ -97,10 +101,28 @@ function normalizeProspect(draft, source = 'Apify') {
 function toDb(p, includeSourceReelle = true) {
   const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
+  row.shopify_verified = p.shopifyVerified || false;
   return row;
 }
 
+const isMissingShopifyVerifiedColumn = (error) => error?.code === 'PGRST204' || /shopify_verified|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 const isMissingSourceReelleColumn = (error) => error?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
+
+async function verifyShopifySite(siteWeb) {
+  const base = asString(siteWeb);
+  if (!base) return { verified: false, reason: 'site absent' };
+  const url = /^https?:\/\//i.test(base) ? base : `https://${base}`;
+  try {
+    const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify verifier' } });
+    const html = await response.text();
+    const haystack = `${response.url} ${html.slice(0, 250000)}`;
+    if (EXCLUDED_PLATFORM_MARKERS.some((marker) => marker.test(haystack))) return { verified: false, reason: 'plateforme exclue détectée' };
+    if (SHOPIFY_MARKERS.some((marker) => marker.test(haystack))) return { verified: true, reason: 'signature Shopify détectée' };
+    return { verified: false, reason: 'signature Shopify absente' };
+  } catch (error) {
+    return { verified: false, reason: error instanceof Error ? error.message : 'vérification impossible' };
+  }
+}
 
 function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : 'boutique e-commerce';
@@ -132,8 +154,8 @@ function apifyItemToProspect(item, criteria) {
   const reviews = firstNumber(item, ['reviewsCount', 'reviews', 'reviewCount']);
   const sourceUrl = firstString(item, ['url', 'placeUrl', 'googleMapsUrl', 'searchPageUrl']) || website;
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
-  const sourceReelle = criteria.platform === 'Toutes' ? 'Google Maps' : resolveRealSource(criteria.platform);
-  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, sourceReelle, typeProduits: category, ville: city, pays: 'France', sourceUrl, volumeSignaux: [sourceReelle === 'Google Maps' ? 'scraping Apify Google Maps' : `scraping Apify ${sourceReelle}`, address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: [`Importé via Apify ${sourceReelle}`, address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  const sourceReelle = criteria.platform === 'Toutes' ? 'Inconnue' : resolveRealSource(criteria.platform);
+  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, sourceReelle, typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: [sourceReelle === 'Google Maps' ? 'scraping Apify Google Maps' : `scraping Apify ${sourceReelle}`, address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: [`Importé via Apify ${sourceReelle}`, address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 async function insertProspects(prospects) {
@@ -172,8 +194,13 @@ async function insertProspects(prospects) {
   if (!rows.length) return { added: 0, ignored };
   let { error } = await supabase.from('prospects').insert(rows);
   let safeRows = rows;
+  if (error && isMissingShopifyVerifiedColumn(error)) {
+    safeRows = rows.map(({ shopify_verified, ...row }) => row);
+    const retry = await supabase.from('prospects').insert(safeRows);
+    error = retry.error;
+  }
   if (error && isMissingSourceReelleColumn(error)) {
-    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false));
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => { const { shopify_verified, ...row } = toDb(prospect, false); return row; });
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
@@ -208,7 +235,7 @@ async function handler(req, res) {
   const progress = [];
 
   if (!criteria) return res.status(400).json({ error: 'Critères de recherche manquants' });
-  if (criteria.platform === 'Vinted' && isGoogleMapsActor(actorId)) return res.status(400).json({ error: 'Google Maps est interdit lorsque la source Vinted est sélectionnée. Configurez un actor Apify Vinted dédié.' });
+  if (['Vinted', 'Shopify'].includes(criteria.platform) && isGoogleMapsActor(actorId)) return res.status(400).json({ error: `Google Maps est interdit lorsque la source ${criteria.platform} est sélectionnée. Configurez un actor Apify ${criteria.platform} dédié.` });
   if (!token) return res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
 
   progress.push('Token detected');
@@ -228,7 +255,15 @@ async function handler(req, res) {
     progress.push('Dataset retrieved');
     const safeItems = Array.isArray(items) ? items : [];
     progress.push(`${safeItems.length} results found`);
-    const prospects = safeItems.map((item) => apifyItemToProspect(item, criteria));
+    let prospects = safeItems.map((item) => apifyItemToProspect(item, criteria));
+    if (criteria.platform === 'Shopify') {
+      const verified = await Promise.all(prospects.map(async (prospect) => {
+        const check = await verifyShopifySite(prospect.siteWeb);
+        return { ...prospect, plateforme: check.verified ? 'Shopify' : prospect.plateforme, sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement' : `Non Shopify: ${check.reason}`] };
+      }));
+      prospects = verified.filter((prospect) => prospect.shopifyVerified);
+      progress.push(`${prospects.length} boutiques Shopify vérifiées`);
+    }
     const insertResult = await insertProspects(prospects);
     progress.push(`${insertResult.added} nouveaux prospects ajoutés, ${insertResult.ignored} doublons ignorés`);
 

@@ -1,8 +1,8 @@
 import type { Prospect } from './prospecting';
 
 export function exportProspectsCsv(prospects: Prospect[]) {
-  const headers = ['nom_boutique','site_web','instagram','tiktok','linkedin','email','telephone','plateforme','type_produits','ville','pays','score','classement','statut_contact','signaux','source','import_source','source_reelle'];
-  const rows = prospects.map((p) => [p.nomBoutique,p.siteWeb,p.instagram,p.tiktok,p.linkedin,p.email,p.telephone,p.plateforme,p.typeProduits,p.ville,p.pays,p.score,p.classement,p.statutContact,p.volumeSignaux.join(' | '),p.sourceUrl,p.source,p.sourceReelle]);
+  const headers = ['nom_boutique','site_web','instagram','tiktok','linkedin','email','telephone','plateforme','type_produits','ville','pays','score','classement','statut_contact','signaux','source','import_source','source_reelle','shopify_verified'];
+  const rows = prospects.map((p) => [p.nomBoutique,p.siteWeb,p.instagram,p.tiktok,p.linkedin,p.email,p.telephone,p.plateforme,p.typeProduits,p.ville,p.pays,p.score,p.classement,p.statutContact,p.volumeSignaux.join(' | '),p.sourceUrl,p.source,p.sourceReelle,p.shopifyVerified]);
   const escape = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
   const csv = [headers, ...rows].map((row) => row.map(escape).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
