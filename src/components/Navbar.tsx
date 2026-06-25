@@ -1,10 +1,11 @@
-import { BarChart3, Download, Mail, MessageSquareText, Radar, RefreshCw, Settings, Target, Truck, Users } from 'lucide-react';
+import { BarChart3, Braces, Download, Mail, MessageSquareText, Radar, RefreshCw, Settings, Target, Truck, Users } from 'lucide-react';
 
-export type NavItem = { key: 'dashboard' | 'search' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'campaigns' | 'export' | 'settings'; label: string; icon: typeof BarChart3 };
+export type NavItem = { key: 'dashboard' | 'search' | 'shopifyRaw' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'campaigns' | 'export' | 'settings'; label: string; icon: typeof BarChart3 };
 export const navItems: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard', icon: BarChart3 },
   { key: 'search', label: 'Recherche prospects', icon: Radar },
   { key: 'prospects', label: 'Liste prospects', icon: Users },
+  { key: 'shopifyRaw', label: 'Résultats bruts Shopify', icon: Braces },
   { key: 'prospect', label: 'Fiche prospect', icon: Target },
   { key: 'messages', label: 'Messages générés', icon: MessageSquareText },
   { key: 'followups', label: 'Relances', icon: RefreshCw },

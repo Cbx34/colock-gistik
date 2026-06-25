@@ -13,7 +13,7 @@ export type Prospect = {
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
-export type ApifyImportResult = { prospects: Prospect[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
+export type ApifyImportResult = { prospects: Prospect[]; rawItems?: Record<string, unknown>[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
 export type ApifyProgressStep = 'token-detected' | 'actor-started' | 'dataset-retrieved' | 'results-found' | 'prospects-inserted';
 export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: number };
 
@@ -163,7 +163,7 @@ async function readApifyError(res: Response) {
   const contentType = res.headers.get('content-type') ?? '';
   if (contentType.includes('application/json')) {
     const body = await res.json().catch(() => ({})) as { error?: string; details?: string; message?: string };
-    return [body.error, body.details, body.message].filter(Boolean).join(' — ') || fallback;
+    return [body.error, typeof body.details === 'string' ? body.details : body.details ? JSON.stringify(body.details) : '', body.message].filter(Boolean).join(' — ') || fallback;
   }
   const text = await res.text().catch(() => '');
   return text || fallback;
@@ -190,7 +190,7 @@ export async function fetchApifyProspects(actorId: string, token: string, criter
     'Actor launched',
     'Dataset retrieved',
     `${result?.itemsCount ?? result?.prospects.length ?? 0} results found`,
-    `${result?.insertedCount ?? result?.prospects.length ?? 0} nouveaux prospects ajoutés, ${result?.duplicateCount ?? 0} doublons ignorés`,
+    `${result?.insertedCount ?? result?.prospects.length ?? 0} prospects insérés exactement dans Supabase, ${result?.duplicateCount ?? 0} doublons ignorés`,
   ];
   progressMessages.forEach((message) => {
     const step: ApifyProgressStep = message.includes('Token') ? 'token-detected'
