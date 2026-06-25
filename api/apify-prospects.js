@@ -8,6 +8,10 @@ const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google 
 const REQUIRED_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
 const PRIORITY_SHOPIFY_QUERIES = ['bijoux France', 'mode France', 'cosmétique France', 'accessoires France', 'bébé France', 'décoration France'];
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
+const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service'];
+const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+const PHONE_REGEX = /(?:\+33|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
+const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com' };
 const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
 const EXCLUDED_SHOPIFY_LEAD_MARKERS = [/carrefour/i, /grande enseigne/i, /hypermarch[ée]/i, /supermarch[ée]/i, /garde[- ]?meubles?/i, /self[- ]?stockage/i, /d[ée]m[ée]nage/i, /moving company/i, /magasin physique/i, /click and collect uniquement/i];
 
@@ -77,7 +81,7 @@ function scoreProspect(input) {
   let score = 2;
   const signals = input.volumeSignaux || [];
   score += Math.min(4, signals.length);
-  if (input.email) score += 1;
+  if (input.email) score += 2;
   if (input.telephone) score += 1;
   if (input.siteWeb) score += 1;
   if (input.shopifyVerified) score += 2;
@@ -97,6 +101,7 @@ function normalizeProspect(draft, source = 'Apify') {
     instagram: draft.instagram?.trim() || undefined,
     tiktok: draft.tiktok?.trim() || undefined,
     linkedin: draft.linkedin?.trim() || undefined,
+    facebook: draft.facebook?.trim() || undefined,
     email: draft.email?.trim() || undefined,
     telephone: draft.telephone?.trim() || undefined,
     plateforme: draft.plateforme || 'Inconnue',
@@ -115,8 +120,9 @@ function normalizeProspect(draft, source = 'Apify') {
   };
 }
 
-function toDb(p, includeSourceReelle = true, includeShopifyVerified = true) {
+function toDb(p, includeSourceReelle = true, includeShopifyVerified = true, includeFacebook = true) {
   const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
+  if (includeFacebook) row.facebook = p.facebook;
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
   if (includeShopifyVerified) row.shopify_verified = p.shopifyVerified || false;
   return row;
@@ -124,15 +130,18 @@ function toDb(p, includeSourceReelle = true, includeShopifyVerified = true) {
 
 const isMissingShopifyVerifiedColumn = (error) => error?.code === 'PGRST204' || /shopify_verified|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 const isMissingSourceReelleColumn = (error) => error?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
+const isMissingFacebookColumn = (error) => error?.code === 'PGRST204' || /facebook|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 
 async function detectOptionalProspectColumns(supabase) {
-  const [sourceReelleProbe, shopifyVerifiedProbe] = await Promise.all([
+  const [sourceReelleProbe, shopifyVerifiedProbe, facebookProbe] = await Promise.all([
     supabase.from('prospects').select('source_reelle').limit(1),
     supabase.from('prospects').select('shopify_verified').limit(1),
+    supabase.from('prospects').select('facebook').limit(1),
   ]);
   return {
     sourceReelle: !sourceReelleProbe.error || !isMissingSourceReelleColumn(sourceReelleProbe.error),
     shopifyVerified: !shopifyVerifiedProbe.error || !isMissingShopifyVerifiedColumn(shopifyVerifiedProbe.error),
+    facebook: !facebookProbe.error || !isMissingFacebookColumn(facebookProbe.error),
   };
 }
 
@@ -175,7 +184,7 @@ function buildApifyShopifyInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
     onlyShopify: true,
     includeEmails: true,
     includePhones: true,
-    requireEmail: true,
+    requireEmail: false,
     requireProducts: true,
   };
 }
@@ -198,17 +207,71 @@ function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
   };
 }
 
+
+function absoluteUrl(base, path) {
+  const raw = asString(base);
+  if (!raw) return '';
+  try {
+    const root = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return new URL(path, root.origin).toString();
+  } catch { return ''; }
+}
+
+function cleanSocialUrl(url, host) {
+  try {
+    const parsed = new URL(url.startsWith('//') ? `https:${url}` : url);
+    if (!parsed.hostname.toLowerCase().includes(host)) return '';
+    return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '');
+  } catch { return ''; }
+}
+
+function extractContactData(html) {
+  const text = String(html || '').replace(/&amp;/g, '&');
+  const found = { email: '', telephone: '', instagram: '', facebook: '', tiktok: '', linkedin: '' };
+  found.email = (text.match(EMAIL_REGEX) || []).find((email) => !/example|sentry|wixpress|shopify/i.test(email)) || '';
+  found.telephone = (text.match(PHONE_REGEX) || [])[0] || '';
+  const hrefs = Array.from(text.matchAll(/href=["']([^"']+)["']/gi)).map((match) => match[1]);
+  for (const href of hrefs) {
+    for (const [key, host] of Object.entries(SOCIAL_HOSTS)) {
+      if (!found[key] && href.includes(host)) found[key] = cleanSocialUrl(href, host);
+    }
+  }
+  return found;
+}
+
+async function enrichShopifyContactData(prospect) {
+  if (!prospect.siteWeb || prospect.email) return prospect;
+  const pages = CONTACT_PATHS.map((path) => absoluteUrl(prospect.siteWeb, path)).filter(Boolean);
+  const collected = {};
+  const visited = [];
+  for (const url of pages) {
+    try {
+      const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify contact enricher' } });
+      if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') || 'text/html')) continue;
+      visited.push(url);
+      Object.assign(collected, Object.fromEntries(Object.entries(extractContactData(await response.text())).filter(([, value]) => value)));
+      if (collected.email && collected.telephone && collected.instagram && collected.facebook && collected.tiktok && collected.linkedin) break;
+    } catch {}
+  }
+  const enriched = normalizeProspect({ ...prospect, ...Object.fromEntries(Object.entries(collected).filter(([key, value]) => value && !prospect[key])), volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify'].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : ''].filter(Boolean).join('\n') }, prospect.source);
+  return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle };
+}
+
 function apifyShopifyItemToProspect(item, criteria) {
   const name = firstString(item, ['name', 'shopName', 'storeName', 'title', 'domain', 'store']);
   const website = firstString(item, ['website', 'websiteUrl', 'url', 'domain', 'storeUrl', 'shopUrl', 'myshopifyDomain']);
   const email = firstString(item, ['email', 'contactEmail', 'emailAddress', 'customerEmail', 'contact_email']);
+  const instagram = firstString(item, ['instagram', 'instagramUrl']);
+  const facebook = firstString(item, ['facebook', 'facebookUrl']);
+  const tiktok = firstString(item, ['tiktok', 'tiktokUrl']);
+  const linkedin = firstString(item, ['linkedin', 'linkedinUrl']);
   const phone = firstString(item, ['phone', 'phoneNumber', 'telephone', 'contactPhone']);
   const contactUrl = firstString(item, ['contactUrl', 'contactPage', 'contactPageUrl', 'contact']);
   const city = firstString(item, ['city', 'location', 'municipality', 'addressCity']) || criteria.location || 'France';
   const products = firstString(item, ['products', 'productSamples', 'productTitles', 'productExamples', 'topProducts']);
   const category = firstString(item, ['category', 'categoryName', 'industry', 'productType', 'niche']) || products || criteria.productType || 'e-commerce';
   const sourceUrl = firstString(item, ['sourceUrl', 'url', 'website', 'storeUrl', 'shopUrl']) || website;
-  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, instagram, facebook, tiktok, linkedin, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 function apifyItemToProspect(item, criteria) {
@@ -271,7 +334,7 @@ async function insertProspects(prospects) {
       ignored += 1;
       continue;
     }
-    rows.push(toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified));
+    rows.push(toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified, optionalColumns.facebook));
     if (email) seenEmails.add(email);
     if (site) seenSites.add(site);
   }
@@ -287,7 +350,13 @@ async function insertProspects(prospects) {
   }
   if (error && isMissingSourceReelleColumn(error)) {
     optionalColumns.sourceReelle = false;
-    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false, optionalColumns.shopifyVerified));
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false, optionalColumns.shopifyVerified, optionalColumns.facebook));
+    const retry = await supabase.from('prospects').insert(safeRows);
+    error = retry.error;
+  }
+  if (error && isMissingFacebookColumn(error)) {
+    optionalColumns.facebook = false;
+    safeRows = safeRows.map(({ facebook, ...row }) => row);
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
@@ -346,7 +415,7 @@ async function handler(req, res) {
     progress.push('Dataset retrieved');
     const safeItems = Array.isArray(items) ? items : [];
     progress.push(`${safeItems.length} results found`);
-    let prospects = safeItems.map((item) => apifyShopifyItemToProspect(item, { ...criteria, platform: 'Shopify' }));
+    let prospects = await Promise.all(safeItems.map(async (item) => enrichShopifyContactData(apifyShopifyItemToProspect(item, { ...criteria, platform: 'Shopify' }))));
     const verified = await Promise.all(prospects.map(async (prospect) => {
       const check = await verifyShopifySite(prospect.siteWeb);
       return { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
