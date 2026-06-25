@@ -1,12 +1,15 @@
 const { randomUUID } = require('node:crypto');
 const { createClient } = require('@supabase/supabase-js');
 
-const DEFAULT_ACTOR_ID = 'compass~crawler-google-places';
-const DEFAULT_SHOPIFY_ACTOR_ID = 'drobnikj~shopify-scraper';
+const DEFAULT_ACTOR_ID = 'clearpath~shopify-store-leads';
+const DEFAULT_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
 const DEFAULT_MAX_ITEMS = 25;
 const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google Maps'];
+const REQUIRED_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
+const PRIORITY_SHOPIFY_QUERIES = ['bijoux France', 'mode France', 'cosmétique France', 'accessoires France', 'bébé France', 'décoration France'];
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
 const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
+const EXCLUDED_SHOPIFY_LEAD_MARKERS = [/carrefour/i, /grande enseigne/i, /hypermarch[ée]/i, /supermarch[ée]/i, /garde[- ]?meubles?/i, /self[- ]?stockage/i, /d[ée]m[ée]nage/i, /moving company/i, /magasin physique/i, /click and collect uniquement/i];
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
 const asNumber = (value, fallback) => {
@@ -137,23 +140,30 @@ async function verifyShopifySite(siteWeb) {
 }
 
 function buildApifyShopifyInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
-  const product = criteria.productType || 'e-commerce';
+  const product = criteria.productType || '';
   const location = criteria.location || 'France';
-  const query = [criteria.keywords, product, location, 'Shopify', 'myshopify.com', 'cdn.shopify.com'].filter(Boolean).join(' ');
+  const customQuery = [criteria.keywords, product, location].filter(Boolean).join(' ').trim();
+  const queries = Array.from(new Set([customQuery, ...PRIORITY_SHOPIFY_QUERIES].filter(Boolean)));
   return {
-    query,
-    search: query,
-    searchQuery: query,
-    searchTerms: [query],
-    startUrls: [],
+    query: queries[0],
+    keyword: queries[0],
+    keywords: queries,
+    search: queries[0],
+    searchQuery: queries[0],
+    searchTerms: queries,
+    queries,
     maxItems,
     maxResults: maxItems,
-    country: location,
+    limit: maxItems,
+    country: 'France',
     location,
     language: 'fr',
+    platform: 'shopify',
     onlyShopify: true,
     includeEmails: true,
     includePhones: true,
+    requireEmail: true,
+    requireProducts: true,
   };
 }
 
@@ -176,14 +186,16 @@ function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
 }
 
 function apifyShopifyItemToProspect(item, criteria) {
-  const name = firstString(item, ['name', 'shopName', 'storeName', 'title', 'domain']) || 'Boutique Shopify';
+  const name = firstString(item, ['name', 'shopName', 'storeName', 'title', 'domain', 'store']);
   const website = firstString(item, ['website', 'websiteUrl', 'url', 'domain', 'storeUrl', 'shopUrl', 'myshopifyDomain']);
-  const email = firstString(item, ['email', 'contactEmail', 'emailAddress', 'customerEmail']);
+  const email = firstString(item, ['email', 'contactEmail', 'emailAddress', 'customerEmail', 'contact_email']);
   const phone = firstString(item, ['phone', 'phoneNumber', 'telephone', 'contactPhone']);
+  const contactUrl = firstString(item, ['contactUrl', 'contactPage', 'contactPageUrl', 'contact']);
   const city = firstString(item, ['city', 'location', 'municipality', 'addressCity']) || criteria.location || 'France';
-  const category = firstString(item, ['category', 'categoryName', 'industry', 'products', 'productType']) || criteria.productType || 'e-commerce';
+  const products = firstString(item, ['products', 'productSamples', 'productTitles', 'productExamples', 'topProducts']);
+  const category = firstString(item, ['category', 'categoryName', 'industry', 'productType', 'niche']) || products || criteria.productType || 'e-commerce';
   const sourceUrl = firstString(item, ['sourceUrl', 'url', 'website', 'storeUrl', 'shopUrl']) || website;
-  return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['scraping Apify Shopify dédié', 'candidat Shopify à vérifier automatiquement'], notes: [`Importé via Apify Shopify`, sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 function apifyItemToProspect(item, criteria) {
@@ -200,6 +212,25 @@ function apifyItemToProspect(item, criteria) {
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : website.toLowerCase().includes('shopify') ? 'Shopify' : 'Inconnue';
   const sourceReelle = criteria.platform === 'Toutes' ? 'Inconnue' : resolveRealSource(criteria.platform);
   return normalizeProspect({ nomBoutique: name, siteWeb: website, email, telephone: phone, plateforme: platform, sourceReelle, typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: [sourceReelle === 'Google Maps' ? 'scraping Apify Google Maps' : `scraping Apify ${sourceReelle}`, address ? `adresse: ${address}` : '', rating ? `note Google ${rating}/5` : '', reviews ? `${reviews} avis Google` : ''].filter(Boolean), notes: [`Importé via Apify ${sourceReelle}`, address ? `Adresse: ${address}` : '', sourceUrl ? `Source: ${sourceUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+}
+
+
+function hasShopifyContact(prospect) {
+  return Boolean(asString(prospect.email) || asString(prospect.telephone) || /contact/i.test(asString(prospect.notes)));
+}
+
+function hasShopifyProducts(prospect) {
+  const haystack = `${prospect.typeProduits || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+  return /bijoux|mode|cosm[ée]tique|accessoires?|b[ée]b[ée]|d[ée]coration|produits?|product|collection|e-commerce/i.test(haystack);
+}
+
+function isExcludedShopifyLead(prospect) {
+  const haystack = `${prospect.nomBoutique || ''} ${prospect.siteWeb || ''} ${prospect.typeProduits || ''} ${prospect.notes || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+  return EXCLUDED_SHOPIFY_LEAD_MARKERS.some((marker) => marker.test(haystack));
+}
+
+function isImportableShopifyLead(prospect) {
+  return Boolean(prospect.siteWeb && prospect.shopifyVerified && hasShopifyProducts(prospect) && hasShopifyContact(prospect) && !isExcludedShopifyLead(prospect));
 }
 
 async function insertProspects(prospects) {
@@ -277,20 +308,18 @@ async function handler(req, res) {
   const body = req.body || {};
   const criteria = body.criteria;
   const requestedPlatform = criteria?.platform;
-  const actorId = normalizeActorId(requestedPlatform === 'Shopify'
-    ? body.shopifyActorId || process.env.APIFY_SHOPIFY_ACTOR_ID || process.env.VITE_APIFY_SHOPIFY_ACTOR_ID || DEFAULT_SHOPIFY_ACTOR_ID
-    : body.actorId || process.env.APIFY_ACTOR_ID || process.env.VITE_APIFY_ACTOR_ID || DEFAULT_ACTOR_ID);
+  const actorId = normalizeActorId(DEFAULT_SHOPIFY_ACTOR_ID);
   const token = readEnv('APIFY_TOKEN', 'VITE_APIFY_TOKEN') || asString(body.token);
   const maxItems = asNumber(body.maxItems, DEFAULT_MAX_ITEMS);
   const progress = [];
 
   if (!criteria) return res.status(400).json({ error: 'Critères de recherche manquants' });
-  if (criteria.platform === 'Shopify' && isGoogleMapsActor(actorId)) return res.status(400).json({ error: 'Google Maps est interdit pour la source Shopify. Configurez APIFY_SHOPIFY_ACTOR_ID avec un actor Shopify dédié.' });
-  if (criteria.platform === 'Vinted' && isGoogleMapsActor(actorId)) return res.status(400).json({ error: `Google Maps est interdit lorsque la source ${criteria.platform} est sélectionnée. Configurez un actor Apify ${criteria.platform} dédié.` });
+  if (isGoogleMapsActor(actorId)) return res.status(400).json({ error: 'Google Maps est totalement interdit pour Shopify.' });
+  if (actorId !== REQUIRED_SHOPIFY_ACTOR_ID) return res.status(400).json({ error: 'Actor Apify autorisé uniquement : clearpath/shopify-store-leads.' });
   if (!token) return res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
 
   progress.push('Token detected');
-  const input = criteria.platform === 'Shopify' ? buildApifyShopifyInput(criteria, maxItems) : buildApifyGoogleMapsInput(criteria, maxItems);
+  const input = buildApifyShopifyInput({ ...criteria, platform: 'Shopify', location: criteria.location || 'France' }, maxItems);
 
   try {
     const apifyUrl = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${encodeURIComponent(token)}`;
@@ -306,15 +335,13 @@ async function handler(req, res) {
     progress.push('Dataset retrieved');
     const safeItems = Array.isArray(items) ? items : [];
     progress.push(`${safeItems.length} results found`);
-    let prospects = safeItems.map((item) => criteria.platform === 'Shopify' ? apifyShopifyItemToProspect(item, criteria) : apifyItemToProspect(item, criteria));
-    if (criteria.platform === 'Shopify') {
-      const verified = await Promise.all(prospects.map(async (prospect) => {
-        const check = await verifyShopifySite(prospect.siteWeb);
-        return { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
-      }));
-      prospects = verified.filter((prospect) => prospect.shopifyVerified);
-      progress.push(`${prospects.length} boutiques Shopify vérifiées`);
-    }
+    let prospects = safeItems.map((item) => apifyShopifyItemToProspect(item, { ...criteria, platform: 'Shopify' }));
+    const verified = await Promise.all(prospects.map(async (prospect) => {
+      const check = await verifyShopifySite(prospect.siteWeb);
+      return { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
+    }));
+    prospects = verified.filter(isImportableShopifyLead);
+    progress.push(`${prospects.length} petites boutiques Shopify e-commerce importables vérifiées`);
     const insertResult = await insertProspects(prospects);
     progress.push(`${insertResult.added} nouveaux prospects ajoutés, ${insertResult.ignored} doublons ignorés`);
 
