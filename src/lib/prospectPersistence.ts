@@ -46,11 +46,31 @@ function isMissingSourceReelleColumn(error: unknown) {
   return maybe?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' '));
 }
 
-async function refreshSourceReelleColumnState() {
-  const probe = await supabase.from('prospects').select('source_reelle,shopify_verified').limit(1);
-  sourceReelleColumnAvailable = !probe.error || !isMissingSourceReelleColumn(probe.error);
-  shopifyVerifiedColumnAvailable = !probe.error || !isMissingShopifyVerifiedColumn(probe.error);
+async function refreshOptionalProspectColumnsState() {
+  const [sourceReelleProbe, shopifyVerifiedProbe] = await Promise.all([
+    supabase.from('prospects').select('source_reelle').limit(1),
+    supabase.from('prospects').select('shopify_verified').limit(1),
+  ]);
+  sourceReelleColumnAvailable = !sourceReelleProbe.error || !isMissingSourceReelleColumn(sourceReelleProbe.error);
+  shopifyVerifiedColumnAvailable = !shopifyVerifiedProbe.error || !isMissingShopifyVerifiedColumn(shopifyVerifiedProbe.error);
 }
+
+function getProspectsOrderQuery() {
+  const query = supabase.from('prospects').select('*');
+  return shopifyVerifiedColumnAvailable
+    ? query.order('shopify_verified', { ascending: false }).order('score', { ascending: false })
+    : query.order('score', { ascending: false });
+}
+
+async function selectProspectsSafely() {
+  const result = await getProspectsOrderQuery();
+  if (result.error && isMissingShopifyVerifiedColumn(result.error)) {
+    shopifyVerifiedColumnAvailable = false;
+    return getProspectsOrderQuery();
+  }
+  return result;
+}
+
 
 export async function ensureProspectingSchema() {
   if (!isSupabaseConfigured) throw new Error(schemaError);
@@ -66,18 +86,14 @@ export async function ensureProspectingSchema() {
 
   const retry = await supabase.from('prospects').select('id').limit(1);
   if (retry.error) throw retry.error;
-  await refreshSourceReelleColumnState();
+  await refreshOptionalProspectColumnsState();
 }
 
 export async function loadProspectingData() {
   await ensureProspectingSchema();
-  await refreshSourceReelleColumnState();
-  const prospectsQuery = supabase.from('prospects').select('*');
-  const orderedProspectsQuery = shopifyVerifiedColumnAvailable
-    ? prospectsQuery.order('shopify_verified', { ascending: false }).order('score', { ascending: false })
-    : prospectsQuery.order('score', { ascending: false });
+  await refreshOptionalProspectColumnsState();
   const [prospectsResult, campaignsResult] = await Promise.all([
-    orderedProspectsQuery,
+    selectProspectsSafely(),
     supabase.from('campagnes').select('*').order('created_at', { ascending: false }),
   ]);
   if (prospectsResult.error) throw prospectsResult.error;
@@ -94,7 +110,14 @@ export async function loadProspectingData() {
 
 export async function syncProspectsWithSupabase(current: Prospect[]) {
   await ensureProspectingSchema();
-  const { data, error } = await supabase.from('prospects').select('*').order('created_at', { ascending: false });
+  await refreshOptionalProspectColumnsState();
+  let { data, error } = await supabase.from('prospects').select('*').order('created_at', { ascending: false });
+  if (error && isMissingShopifyVerifiedColumn(error)) {
+    shopifyVerifiedColumnAvailable = false;
+    const retry = await supabase.from('prospects').select('*').order('created_at', { ascending: false });
+    data = retry.data;
+    error = retry.error;
+  }
   if (error) throw error;
   const merged = mergeProspects((data ?? []).map(fromDb), current).prospects;
   await saveProspectsToSupabase(merged);
@@ -104,6 +127,7 @@ export async function syncProspectsWithSupabase(current: Prospect[]) {
 export async function saveProspectsToSupabase(prospects: Prospect[]) {
   if (!isSupabaseConfigured) throw new Error(schemaError);
   if (!prospects.length) return;
+  await refreshOptionalProspectColumnsState();
 
   const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
   if (selectError) throw selectError;
