@@ -5,7 +5,7 @@ export type ImportSource = 'Apify' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Ets
 export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo' | 'Inconnue';
 
 export type Prospect = {
-  id: string; nomBoutique: string; siteWeb?: string; instagram?: string; tiktok?: string; linkedin?: string; email?: string; telephone?: string;
+  id: string; nomBoutique: string; siteWeb?: string; instagram?: string; facebook?: string; tiktok?: string; linkedin?: string; email?: string; telephone?: string;
   plateforme: Platform; typeProduits: string; ville: string; pays: string; score: number; classement: Ranking; statutContact: ContactStatus;
   volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
 };
@@ -36,7 +36,7 @@ export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: strin
   let score = 2;
   const signals = input.volumeSignaux ?? [];
   score += Math.min(4, signals.length);
-  if (input.email) score += 1;
+  if (input.email) score += 2;
   if (input.telephone) score += 1;
   if (input.siteWeb) score += 1;
   if (input.shopifyVerified) score += 2;
@@ -59,7 +59,7 @@ export function isGoogleMapsActor(actorId: string) {
 export function normalizeProspect(draft: ProspectImportDraft, source: ImportSource = 'CSV'): Prospect {
   const scored = scoreProspect(draft);
   const sourceReelle = draft.sourceReelle ?? resolveRealSource(source === 'Apify' ? draft.plateforme ?? 'Inconnue' : source);
-  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
+  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
 }
 
 export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
@@ -84,7 +84,7 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
   return lines.map((line) => {
     const cells = line.match(/("(?:""|[^"])*"|[^,]+)/g)?.map((c)=>c.replace(/^"|"$/g, '').replaceAll('""','"').trim()) ?? [];
     const get = (...names: string[]) => cells[headers.findIndex((h)=>names.includes(h))] || '';
-    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), tiktok: get('tiktok'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), shopifyVerified: get('shopify_verified','shopifyVerified') === 'true', notes: `Import ${source}` }, source);
+    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), facebook: get('facebook'), tiktok: get('tiktok'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), shopifyVerified: get('shopify_verified','shopifyVerified') === 'true', notes: `Import ${source}` }, source);
   });
 }
 
@@ -98,7 +98,7 @@ export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFA
   const customQuery = [criteria.keywords, product, location].filter(Boolean).join(' ').trim();
   const queries = Array.from(new Set([customQuery, ...PRIORITY_SHOPIFY_QUERIES].filter(Boolean)));
   const query = queries[0];
-  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: 'France', location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: true, requireProducts: true };
+  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: 'France', location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: false, requireProducts: true };
 }
 
 export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {

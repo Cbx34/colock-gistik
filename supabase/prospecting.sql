@@ -14,6 +14,7 @@ create table if not exists prospects (
   nom_boutique text not null,
   site_web text,
   instagram text,
+  facebook text,
   tiktok text,
   linkedin text,
   email text,
@@ -83,6 +84,7 @@ create table if not exists interactions (
 
 alter table prospects add column if not exists source_reelle text not null default 'Google Maps';
 alter table prospects add column if not exists shopify_verified boolean not null default false;
+alter table prospects add column if not exists facebook text;
 update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
 alter table prospects alter column source_reelle set default 'Google Maps';
 alter table prospects drop constraint if exists prospects_source_check;
@@ -91,6 +93,7 @@ alter table prospects drop constraint if exists prospects_source_reelle_check;
 alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue'));
 
 create index if not exists prospects_shopify_verified_idx on prospects(shopify_verified desc, score desc);
+create index if not exists prospects_email_found_idx on prospects ((email is not null), score desc);
 create index if not exists prospects_classement_idx on prospects(classement);
 create index if not exists prospects_next_follow_up_idx on prospects(next_follow_up_at) where statut_contact <> 'Supprimé';
 create unique index if not exists prospects_dedupe_email_idx on prospects (lower(email)) where email is not null;
@@ -191,6 +194,7 @@ begin
 
   alter table prospects add column if not exists source_reelle text not null default 'Google Maps';
   alter table prospects add column if not exists shopify_verified boolean not null default false;
+alter table prospects add column if not exists facebook text;
   update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
   alter table prospects alter column source_reelle set default 'Google Maps';
   alter table prospects drop constraint if exists prospects_source_check;
@@ -201,6 +205,7 @@ begin
   create unique index if not exists messages_prospect_sujet_idx on messages(prospect_id, sujet);
   create unique index if not exists relances_prospect_rang_idx on relances(prospect_id, rang);
   create index if not exists prospects_shopify_verified_idx on prospects(shopify_verified desc, score desc);
+create index if not exists prospects_email_found_idx on prospects ((email is not null), score desc);
   create index if not exists prospects_classement_idx on prospects(classement);
   create index if not exists prospects_next_follow_up_idx on prospects(next_follow_up_at) where statut_contact <> 'Supprimé';
   create index if not exists relances_due_idx on relances(due_at, statut);
