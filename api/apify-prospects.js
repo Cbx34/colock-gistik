@@ -98,15 +98,26 @@ function normalizeProspect(draft, source = 'Apify') {
   };
 }
 
-function toDb(p, includeSourceReelle = true) {
+function toDb(p, includeSourceReelle = true, includeShopifyVerified = true) {
   const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
-  row.shopify_verified = p.shopifyVerified || false;
+  if (includeShopifyVerified) row.shopify_verified = p.shopifyVerified || false;
   return row;
 }
 
 const isMissingShopifyVerifiedColumn = (error) => error?.code === 'PGRST204' || /shopify_verified|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 const isMissingSourceReelleColumn = (error) => error?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
+
+async function detectOptionalProspectColumns(supabase) {
+  const [sourceReelleProbe, shopifyVerifiedProbe] = await Promise.all([
+    supabase.from('prospects').select('source_reelle').limit(1),
+    supabase.from('prospects').select('shopify_verified').limit(1),
+  ]);
+  return {
+    sourceReelle: !sourceReelleProbe.error || !isMissingSourceReelleColumn(sourceReelleProbe.error),
+    shopifyVerified: !shopifyVerifiedProbe.error || !isMissingShopifyVerifiedColumn(shopifyVerifiedProbe.error),
+  };
+}
 
 async function verifyShopifySite(siteWeb) {
   const base = asString(siteWeb);
@@ -164,6 +175,7 @@ async function insertProspects(prospects) {
   if (!url || !key) throw new Error('Variables Supabase serveur manquantes (SUPABASE_URL/VITE_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY/VITE_SUPABASE_ANON_KEY)');
   if (!prospects.length) return { added: 0, ignored: 0 };
   const supabase = createClient(url, key, { auth: { persistSession: false } });
+  const optionalColumns = await detectOptionalProspectColumns(supabase);
   const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
   if (selectError) {
     logError('[apify-prospects] Supabase prospect lookup failed', selectError, { code: selectError.code, details: selectError.details, hint: selectError.hint });
@@ -186,7 +198,7 @@ async function insertProspects(prospects) {
       ignored += 1;
       continue;
     }
-    rows.push(toDb(prospect));
+    rows.push(toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified));
     if (email) seenEmails.add(email);
     if (site) seenSites.add(site);
   }
@@ -195,12 +207,14 @@ async function insertProspects(prospects) {
   let { error } = await supabase.from('prospects').insert(rows);
   let safeRows = rows;
   if (error && isMissingShopifyVerifiedColumn(error)) {
+    optionalColumns.shopifyVerified = false;
     safeRows = rows.map(({ shopify_verified, ...row }) => row);
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
   if (error && isMissingSourceReelleColumn(error)) {
-    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => { const { shopify_verified, ...row } = toDb(prospect, false); return row; });
+    optionalColumns.sourceReelle = false;
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false, optionalColumns.shopifyVerified));
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
