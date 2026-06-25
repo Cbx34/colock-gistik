@@ -28,6 +28,19 @@ const describeError = (error) => {
   }
   return { message: String(error), raw: error };
 };
+const formatSupabaseError = (error, context = {}) => {
+  const details = {
+    message: error?.message || String(error),
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+    ...context,
+  };
+  return Object.entries(details)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([key, value]) => `${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}`)
+    .join(' | ');
+};
 const logError = (message, error, context = {}) => {
   console.error(message, { ...context, error: describeError(error) });
 };
@@ -229,10 +242,6 @@ function isExcludedShopifyLead(prospect) {
   return EXCLUDED_SHOPIFY_LEAD_MARKERS.some((marker) => marker.test(haystack));
 }
 
-function isImportableShopifyLead(prospect) {
-  return Boolean(prospect.siteWeb && prospect.shopifyVerified && hasShopifyProducts(prospect) && hasShopifyContact(prospect) && !isExcludedShopifyLead(prospect));
-}
-
 async function insertProspects(prospects) {
   const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
   const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
@@ -243,7 +252,7 @@ async function insertProspects(prospects) {
   const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
   if (selectError) {
     logError('[apify-prospects] Supabase prospect lookup failed', selectError, { code: selectError.code, details: selectError.details, hint: selectError.hint });
-    throw new Error(selectError.message);
+    throw new Error(`Erreur Supabase lookup prospects — ${formatSupabaseError(selectError)}`);
   }
 
   const existingIds = new Set((existing || []).map((row) => row.id).filter(Boolean));
@@ -284,8 +293,9 @@ async function insertProspects(prospects) {
   }
   if (!error) return { added: safeRows.length, ignored };
   if (!isDuplicateError(error)) {
+    const detail = formatSupabaseError(error, { rows: rows.length });
     logError('[apify-prospects] Supabase bulk insert failed', error, { code: error.code, details: error.details, hint: error.hint, rows: rows.length });
-    throw new Error(error.message);
+    throw new Error(`Erreur Supabase insertion groupée — ${detail}`);
   }
 
   let added = 0;
@@ -294,8 +304,9 @@ async function insertProspects(prospects) {
     if (!rowError) added += 1;
     else if (isDuplicateError(rowError)) ignored += 1;
     else {
-      logError('[apify-prospects] Supabase single-row insert failed', rowError, { code: rowError.code, details: rowError.details, hint: rowError.hint, prospectId: row.id });
-      throw new Error(rowError.message);
+      const detail = formatSupabaseError(rowError, { prospectId: row.id, nomBoutique: row.nom_boutique, siteWeb: row.site_web });
+      logError('[apify-prospects] Supabase single-row insert failed', rowError, { code: rowError.code, details: rowError.details, hint: rowError.hint, prospectId: row.id, row });
+      throw new Error(`Erreur Supabase insertion ligne — ${detail}`);
     }
   }
   return { added, ignored };
@@ -340,15 +351,25 @@ async function handler(req, res) {
       const check = await verifyShopifySite(prospect.siteWeb);
       return { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
     }));
-    prospects = verified.filter(isImportableShopifyLead);
-    progress.push(`${prospects.length} petites boutiques Shopify e-commerce importables vérifiées`);
+    prospects = verified.map((prospect) => ({
+      ...prospect,
+      plateforme: 'Shopify',
+      sourceReelle: prospect.shopifyVerified ? 'Shopify' : prospect.sourceReelle,
+      volumeSignaux: [
+        ...prospect.volumeSignaux,
+        hasShopifyProducts(prospect) ? 'produits Shopify exploitables détectés' : 'produits non renseignés par l’actor',
+        hasShopifyContact(prospect) ? 'contact public détecté' : 'contact public absent dans le résultat brut',
+        isExcludedShopifyLead(prospect) ? 'signal exclusion détecté (import conservé)' : '',
+      ].filter(Boolean),
+    }));
+    progress.push(`${prospects.length} prospects Shopify normalisés avant insertion`);
     const insertResult = await insertProspects(prospects);
-    progress.push(`${insertResult.added} nouveaux prospects ajoutés, ${insertResult.ignored} doublons ignorés`);
+    progress.push(`${insertResult.added} prospects insérés exactement dans Supabase, ${insertResult.ignored} doublons ignorés`);
 
-    return res.status(200).json({ prospects, query: input.searchStringsArray?.[0] || input.query, itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
+    return res.status(200).json({ prospects, rawItems: safeItems, query: input.searchStringsArray?.[0] || input.query, itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
   } catch (error) {
     logError('[apify-prospects] Route failed', error, { actorId, progress });
-    return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', actorId, progress });
+    return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', details: describeError(error), actorId, progress });
   }
 }
 
