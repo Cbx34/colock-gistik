@@ -94,9 +94,13 @@ function normalizeProspect(draft, source = 'Apify') {
   };
 }
 
-function toDb(p) {
-  return { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, source_reelle: p.sourceReelle, notes: p.notes, created_at: p.createdAt };
+function toDb(p, includeSourceReelle = true) {
+  const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
+  if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
+  return row;
 }
+
+const isMissingSourceReelleColumn = (error) => error?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 
 function buildApifyGoogleMapsInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
   const platform = criteria.platform !== 'Toutes' ? criteria.platform : 'boutique e-commerce';
@@ -166,15 +170,21 @@ async function insertProspects(prospects) {
   }
 
   if (!rows.length) return { added: 0, ignored };
-  const { error } = await supabase.from('prospects').insert(rows);
-  if (!error) return { added: rows.length, ignored };
+  let { error } = await supabase.from('prospects').insert(rows);
+  let safeRows = rows;
+  if (error && isMissingSourceReelleColumn(error)) {
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false));
+    const retry = await supabase.from('prospects').insert(safeRows);
+    error = retry.error;
+  }
+  if (!error) return { added: safeRows.length, ignored };
   if (!isDuplicateError(error)) {
     logError('[apify-prospects] Supabase bulk insert failed', error, { code: error.code, details: error.details, hint: error.hint, rows: rows.length });
     throw new Error(error.message);
   }
 
   let added = 0;
-  for (const row of rows) {
+  for (const row of safeRows) {
     const { error: rowError } = await supabase.from('prospects').insert(row);
     if (!rowError) added += 1;
     else if (isDuplicateError(rowError)) ignored += 1;
