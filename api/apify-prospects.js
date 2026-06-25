@@ -14,6 +14,8 @@ const PHONE_REGEX = /(?:\+33|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
 const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com' };
 const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
 const EXCLUDED_SHOPIFY_LEAD_MARKERS = [/carrefour/i, /grande enseigne/i, /hypermarch[ée]/i, /supermarch[ée]/i, /garde[- ]?meubles?/i, /self[- ]?stockage/i, /d[ée]m[ée]nage/i, /moving company/i, /magasin physique/i, /click and collect uniquement/i];
+const EXCLUDED_FRANCE_COUNTRY_MARKERS = [/\bbelgique\b|\bbelgium\b|\bbe\b/i, /\bsuisse\b|\bswitzerland\b|\bch\b/i, /\bluxembourg\b|\blu\b/i, /\bcanada\b|\bcanadian\b|\bca\b/i];
+const FRENCH_LEGAL_MARKERS = [/\bSIRET\b/i, /\bSIREN\b/i, /\bRCS\s+[A-ZÀ-ÿ-]+/i, /TVA\s+(intracommunautaire|FR)/i, /\bAPE\b|\bNAF\b/i, /soci[ée]t[ée]\s+(par actions simplifi[ée]e|à responsabilit[ée] limit[ée]e|immatricul[ée]e)/i, /mentions?\s+l[ée]gales?/i];
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
 const asNumber = (value, fallback) => {
@@ -227,7 +229,8 @@ function cleanSocialUrl(url, host) {
 
 function extractContactData(html) {
   const text = String(html || '').replace(/&amp;/g, '&');
-  const found = { email: '', telephone: '', instagram: '', facebook: '', tiktok: '', linkedin: '' };
+  const found = { email: '', telephone: '', instagram: '', facebook: '', tiktok: '', linkedin: '', frenchLegalNotice: false };
+  found.frenchLegalNotice = FRENCH_LEGAL_MARKERS.some((marker) => marker.test(text));
   found.email = (text.match(EMAIL_REGEX) || []).find((email) => !/example|sentry|wixpress|shopify/i.test(email)) || '';
   found.telephone = (text.match(PHONE_REGEX) || [])[0] || '';
   const hrefs = Array.from(text.matchAll(/href=["']([^"']+)["']/gi)).map((match) => match[1]);
@@ -237,6 +240,48 @@ function extractContactData(html) {
     }
   }
   return found;
+}
+
+
+function isFranceSelected(criteria) {
+  return /(^|[^a-z])france([^a-z]|$)|\bfr\b|fran[çc]ais/i.test(`${criteria?.location || ''} ${criteria?.keywords || ''}`);
+}
+
+function hasExcludedCountryMarker(value) {
+  return EXCLUDED_FRANCE_COUNTRY_MARKERS.some((marker) => marker.test(asString(value)));
+}
+
+function normalizePhoneForCountry(value) {
+  return asString(value).replace(/[\s.()-]/g, '');
+}
+
+function hasFrenchAddress(prospect) {
+  const haystack = `${prospect.notes || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+  return /\b(adresse|address|country|pays)[^\n|,;]*(france|\bFR\b)|\bfrance\b/i.test(haystack) && !hasExcludedCountryMarker(haystack);
+}
+
+function getFranceVerificationReason(prospect) {
+  const haystack = `${prospect.notes || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+  if (hasExcludedCountryMarker(haystack)) return '';
+  if (hasFrenchAddress(prospect)) return 'adresse France';
+  if (normalizePhoneForCountry(prospect.telephone).startsWith('+33')) return 'téléphone +33';
+  if (/mentions l[ée]gales fran[çc]aises|SIRET|SIREN|RCS|TVA intracommunautaire FR/i.test(haystack)) return 'mentions légales françaises';
+  return '';
+}
+
+function filterFranceProspects(prospects, criteria) {
+  if (!isFranceSelected(criteria)) return prospects;
+  return prospects
+    .map((prospect) => {
+      const reason = getFranceVerificationReason(prospect);
+      if (!reason) return null;
+      return {
+        ...prospect,
+        pays: 'France',
+        volumeSignaux: Array.from(new Set([...prospect.volumeSignaux, `France vérifiée (${reason})`])),
+      };
+    })
+    .filter(Boolean);
 }
 
 async function enrichShopifyContactData(prospect) {
@@ -253,7 +298,8 @@ async function enrichShopifyContactData(prospect) {
       if (collected.email && collected.telephone && collected.instagram && collected.facebook && collected.tiktok && collected.linkedin) break;
     } catch {}
   }
-  const enriched = normalizeProspect({ ...prospect, ...Object.fromEntries(Object.entries(collected).filter(([key, value]) => value && !prospect[key])), volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify'].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : ''].filter(Boolean).join('\n') }, prospect.source);
+  const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => key !== 'frenchLegalNotice' && value && !prospect[key]));
+  const enriched = normalizeProspect({ ...prospect, ...contactFields, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
   return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle };
 }
 
@@ -266,12 +312,14 @@ function apifyShopifyItemToProspect(item, criteria) {
   const tiktok = firstString(item, ['tiktok', 'tiktokUrl']);
   const linkedin = firstString(item, ['linkedin', 'linkedinUrl']);
   const phone = firstString(item, ['phone', 'phoneNumber', 'telephone', 'contactPhone']);
+  const address = firstString(item, ['address', 'formattedAddress', 'streetAddress', 'fullAddress']);
+  const country = firstString(item, ['country', 'countryCode', 'addressCountry']);
   const contactUrl = firstString(item, ['contactUrl', 'contactPage', 'contactPageUrl', 'contact']);
   const city = firstString(item, ['city', 'location', 'municipality', 'addressCity']) || criteria.location || 'France';
   const products = firstString(item, ['products', 'productSamples', 'productTitles', 'productExamples', 'topProducts']);
   const category = firstString(item, ['category', 'categoryName', 'industry', 'productType', 'niche']) || products || criteria.productType || 'e-commerce';
   const sourceUrl = firstString(item, ['sourceUrl', 'url', 'website', 'storeUrl', 'shopUrl']) || website;
-  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, instagram, facebook, tiktok, linkedin, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, instagram, facebook, tiktok, linkedin, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: country || 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', address ? `adresse: ${address}` : '', country ? `pays déclaré: ${country}` : '', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', address ? `Adresse: ${address}` : '', country ? `Pays déclaré: ${country}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 function apifyItemToProspect(item, criteria) {
@@ -431,7 +479,8 @@ async function handler(req, res) {
         isExcludedShopifyLead(prospect) ? 'signal exclusion détecté (import conservé)' : '',
       ].filter(Boolean),
     }));
-    progress.push(`${prospects.length} prospects Shopify normalisés avant insertion`);
+    prospects = filterFranceProspects(prospects, criteria);
+    progress.push(`${prospects.length} prospects Shopify normalisés après filtre France`);
     const insertResult = await insertProspects(prospects);
     progress.push(`${insertResult.added} prospects insérés exactement dans Supabase, ${insertResult.ignored} doublons ignorés`);
 
