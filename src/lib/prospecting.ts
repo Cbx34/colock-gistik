@@ -7,18 +7,18 @@ export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google
 
 export type EcommerceKeywordCategory = { category: string; keywords: string[] };
 export const ECOMMERCE_KEYWORD_LIBRARY: EcommerceKeywordCategory[] = [
-  { category: 'MODE', keywords: ['vêtements','chaussures','sneakers','maroquinerie','sacs','bijoux','montres','lunettes','casquettes','accessoires mode','lingerie','robe','costume','streetwear','sportswear'] },
-  { category: 'BEAUTÉ', keywords: ['cosmétiques','maquillage','parfum','soins visage','soins corps','savon','shampoing','barbier','beauté bio','ongles'] },
-  { category: 'MAISON', keywords: ['décoration','mobilier','linge de maison','bougies','art de la table','cuisine','rangement','jardin','plantes'] },
-  { category: 'SPORT', keywords: ['fitness','musculation','crossfit','running','cyclisme','randonnée','yoga','natation','tennis','football'] },
-  { category: 'ANIMAUX', keywords: ['animalerie','chien','chat','aquarium','accessoires animaux'] },
-  { category: 'ENFANTS', keywords: ['jouets','bébé','puériculture','jeux éducatifs'] },
-  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','objets connectés'] },
-  { category: 'ALIMENTAIRE', keywords: ['épicerie','café','thé','compléments alimentaires','nutrition sportive'] },
-  { category: 'LOISIRS', keywords: ['manga','cartes pokemon','figurines','jeux de société','collection'] },
-  { category: 'AUTO MOTO', keywords: ['accessoires auto','accessoires moto'] },
-  { category: 'B2B', keywords: ['emballage','fournitures bureau','équipements professionnels','artisanat'] },
+  { category: 'MODE', keywords: ['vêtement','vêtements','vêtements femme','vêtements homme','robe','robe femme','pantalon','jean','chemise','t-shirt','tee-shirt','sweat','pull','veste','manteau','lingerie','sous-vêtements','chaussures','baskets','sneakers','sac','sacs','maroquinerie','montre','montres','bijoux','lunettes','accessoires','accessoires mode','mode femme','mode homme','prêt-à-porter','pret a porter','streetwear','sportswear','costume','casquettes'] },
+  { category: 'BEAUTÉ', keywords: ['cosmétique','cosmétiques','maquillage','parfum','soins visage','soins corps','crème','huile','beauté bio','skincare','savon','shampoing','coiffure','esthétique','ongles','bien-être','barbier'] },
+  { category: 'MAISON', keywords: ['décoration','meuble','meubles','cuisine','salle de bain','rangement','textile maison','linge de maison','jardin','bricolage','éclairage','mobilier','bougies','art de la table','plantes'] },
+  { category: 'SPORT', keywords: ['fitness','musculation','yoga','running','vélo','cyclisme','randonnée','crossfit','sportwear','sportswear','nutrition sportive','natation','tennis','football'] },
+  { category: 'ANIMAUX', keywords: ['chien','chat','animalerie','accessoires animaux','alimentation chien','alimentation chat','aquarium'] },
+  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','électronique','domotique','objets connectés'] },
+  { category: 'ALIMENTAIRE', keywords: ['épicerie','bio','complément alimentaire','compléments alimentaires','nutrition','thé','café'] },
+  { category: 'ENFANTS', keywords: ['bébé','jouets','puériculture','vêtements enfant','jeux éducatifs'] },
+  { category: 'AUTO MOTO', keywords: ['automobile','moto','accessoires auto','accessoires moto'] },
+  { category: 'B2B', keywords: ['grossiste','fournisseur','industriel','matériel professionnel','emballage','fournitures bureau','équipements professionnels','artisanat'] },
 ];
+export const QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY = 1000;
 export const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ category, keywords }) => keywords.map((keyword) => ({ category, keyword, query: `${keyword} France` })));
 
 export type Prospect = {
@@ -38,6 +38,8 @@ const DEFAULT_APIFY_MAX_ITEMS = 25;
 export const DEFAULT_APIFY_GOOGLE_MAPS_ACTOR_ID = 'clearpath/shopify-store-leads';
 export const DEFAULT_APIFY_SHOPIFY_ACTOR_ID = 'clearpath/shopify-store-leads';
 export const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES.map((item) => item.query);
+export function qualifiedTargetPerKeyword(keywordCount: number, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) { return Math.max(1, Math.ceil(target / Math.max(1, keywordCount))); }
+export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return Boolean(prospect.shopifyVerified && prospect.email && (prospect.instagram || prospect.facebook)); }
 
 const nowIso = () => new Date().toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOString();
@@ -54,12 +56,13 @@ export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: strin
   const haystack = `${input.pays ?? ''} ${input.ville ?? ''} ${signals.join(' ')} ${input.notes ?? ''}`;
   let score = 0;
   if (input.email) score += 5;
-  if (input.telephone) score += 3;
-  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 5;
-  if (input.shopifyVerified) score += 3;
-  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 5;
-  if (input.instagram || input.facebook) score += 5;
-  return { score, classement: score >= 18 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
+  if (input.telephone) score += 2;
+  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 4;
+  if (input.shopifyVerified) score += 4;
+  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 2;
+  if (input.instagram || input.facebook) score += 3;
+  score = Math.min(20, score);
+  return { score, classement: score >= 16 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
 }
 
 export function resolveRealSource(platform: SearchCriteria['platform'] | Platform | ImportSource): RealSource {
@@ -113,7 +116,7 @@ export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFA
   const customQuery = [criteria.keywords, product, location].filter(Boolean).join(' ').trim();
   const queries = Array.from(new Set([customQuery, ...PRIORITY_SHOPIFY_QUERIES].filter(Boolean)));
   const query = queries[0];
-  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: 'France', location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: false, requireProducts: true };
+  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: 'France', location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: true, requireSocial: true, requireProducts: true, qualificationRules: ['shopify_verified','email_found','instagram_or_facebook','france_priority'] };
 }
 
 export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
