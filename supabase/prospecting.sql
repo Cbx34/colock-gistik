@@ -23,7 +23,7 @@ create table if not exists prospects (
   type_produits text,
   ville text,
   pays text not null default 'France',
-  score integer not null default 0 check (score between 0 and 26),
+  score integer not null default 0 check (score between 0 and 100),
   classement text not null default 'faible' check (classement in ('chaud','moyen','faible')),
   statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+2','Relance J+5','Client signé','Supprimé')),
   volume_signaux text[] not null default '{}',
@@ -86,7 +86,7 @@ alter table prospects add column if not exists source_reelle text not null defau
 alter table prospects add column if not exists shopify_verified boolean not null default false;
 alter table prospects add column if not exists facebook text;
 alter table prospects drop constraint if exists prospects_score_check;
-alter table prospects add constraint prospects_score_check check (score between 0 and 26);
+alter table prospects add constraint prospects_score_check check (score between 0 and 100);
 update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
 alter table prospects alter column source_reelle set default 'Google Maps';
 alter table prospects drop constraint if exists prospects_source_check;
@@ -135,7 +135,7 @@ begin
     type_produits text,
     ville text,
     pays text not null default 'France',
-    score integer not null default 0 check (score between 0 and 26),
+    score integer not null default 0 check (score between 0 and 100),
     classement text not null default 'faible' check (classement in ('chaud','moyen','faible')),
     statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+2','Relance J+5','Client signé','Supprimé')),
     volume_signaux text[] not null default '{}',
@@ -199,7 +199,7 @@ begin
   alter table prospects add column if not exists shopify_verified boolean not null default false;
 alter table prospects add column if not exists facebook text;
   alter table prospects drop constraint if exists prospects_score_check;
-  alter table prospects add constraint prospects_score_check check (score between 0 and 26);
+  alter table prospects add constraint prospects_score_check check (score between 0 and 100);
   update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
   alter table prospects alter column source_reelle set default 'Google Maps';
   alter table prospects drop constraint if exists prospects_source_check;

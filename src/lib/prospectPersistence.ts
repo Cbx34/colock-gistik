@@ -31,6 +31,41 @@ const isDuplicateError = (error: unknown) => {
   return maybe?.code === '23505' || /duplicate key value violates unique constraint/i.test(maybe?.message ?? '');
 };
 
+type ProspectCheckConstraint = { column: string; allowed: string };
+const PROSPECT_CHECK_CONSTRAINTS: Record<string, ProspectCheckConstraint> = {
+  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
+  prospects_classement_check: { column: 'classement', allowed: 'chaud, moyen, faible' },
+  prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
+  prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
+  prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },
+};
+
+function getCheckConstraintName(error: unknown) {
+  const maybe = error as { message?: string; details?: string; hint?: string };
+  const haystack = [maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' ');
+  return Object.keys(PROSPECT_CHECK_CONSTRAINTS).find((name) => haystack.includes(name)) ?? '';
+}
+
+function isCheckViolation(error: unknown) {
+  const maybe = error as { code?: string };
+  return maybe?.code === '23514' || Boolean(getCheckConstraintName(error));
+}
+
+function logInvalidProspect(error: unknown, row: Record<string, unknown>) {
+  const constraint = getCheckConstraintName(error);
+  const info = PROSPECT_CHECK_CONSTRAINTS[constraint];
+  console.warn('[prospectPersistence] Prospect invalide ignoré après contrainte Supabase', {
+    constraint: constraint || 'unknown_check_constraint',
+    column: info?.column ?? 'unknown',
+    rejectedValue: info ? row[info.column] : undefined,
+    allowed: info?.allowed,
+    prospectId: row.id,
+    nomBoutique: row.nom_boutique,
+    siteWeb: row.site_web,
+    error,
+  });
+}
+
 const campaignToDb = (c: Campaign) => ({ id: c.id, nom: c.nom, cible: c.cible, statut: c.statut, created_at: c.createdAt });
 const campaignFromDb = (r: Record<string, unknown>): Campaign => ({ id: String(r.id), nom: String(r.nom), cible: String(r.cible), statut: r.statut as Campaign['statut'], createdAt: String(r.created_at) });
 
@@ -178,11 +213,18 @@ export async function saveProspectsToSupabase(prospects: Prospect[]) {
     error = retry.error;
   }
   if (error) {
-    if (!isDuplicateError(error)) throw error;
-    for (const row of rows) {
+    if (!isDuplicateError(error) && !isCheckViolation(error)) throw error;
+    const validProspects: Prospect[] = [];
+    for (const prospect of writableProspects) {
+      const row = toDb(prospect, sourceReelleColumnAvailable);
       const { error: rowError } = await supabase.from('prospects').upsert(row, { onConflict: 'id' });
-      if (rowError && !isDuplicateError(rowError)) throw rowError;
+      if (!rowError) validProspects.push(prospect);
+      else if (isDuplicateError(rowError)) continue;
+      else if (isCheckViolation(rowError)) logInvalidProspect(rowError, row);
+      else throw rowError;
     }
+    await saveMessagesAndFollowUpsToSupabase(validProspects);
+    return;
   }
   await saveMessagesAndFollowUpsToSupabase(writableProspects);
 }
