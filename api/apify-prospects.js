@@ -41,6 +41,29 @@ const nowIso = () => new Date().toISOString();
 const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
+const PROSPECT_CHECK_CONSTRAINTS = {
+  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
+  prospects_classement_check: { column: 'classement', allowed: 'chaud, moyen, faible' },
+  prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
+  prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
+  prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },
+};
+const getCheckConstraintName = (error) => {
+  const haystack = [error?.message, error?.details, error?.hint].filter(Boolean).join(' ');
+  return Object.keys(PROSPECT_CHECK_CONSTRAINTS).find((name) => haystack.includes(name)) || '';
+};
+const describeCheckViolation = (error, row = {}) => {
+  const constraint = getCheckConstraintName(error);
+  if (!constraint) return null;
+  const info = PROSPECT_CHECK_CONSTRAINTS[constraint];
+  return {
+    constraint,
+    column: info.column,
+    rejectedValue: row[info.column],
+    allowed: info.allowed,
+  };
+};
+const isCheckViolation = (error) => error?.code === '23514' || Boolean(getCheckConstraintName(error));
 const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
 const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
 const describeError = (error) => {
@@ -423,7 +446,7 @@ async function insertProspects(prospects) {
     error = retry.error;
   }
   if (!error) return { added: safeRows.length, ignored };
-  if (!isDuplicateError(error)) {
+  if (!isDuplicateError(error) && !isCheckViolation(error)) {
     const detail = formatSupabaseError(error, { rows: rows.length });
     logError('[apify-prospects] Supabase bulk insert failed', error, { code: error.code, details: error.details, hint: error.hint, rows: rows.length });
     throw new Error(`Erreur Supabase insertion groupée — ${detail}`);
@@ -434,6 +457,11 @@ async function insertProspects(prospects) {
     const { error: rowError } = await supabase.from('prospects').insert(row);
     if (!rowError) added += 1;
     else if (isDuplicateError(rowError)) ignored += 1;
+    else if (isCheckViolation(rowError)) {
+      ignored += 1;
+      const violation = describeCheckViolation(rowError, row);
+      logError('[apify-prospects] Prospect invalide ignoré après contrainte Supabase', rowError, { prospectId: row.id, nomBoutique: row.nom_boutique, siteWeb: row.site_web, ...violation });
+    }
     else {
       const detail = formatSupabaseError(rowError, { prospectId: row.id, nomBoutique: row.nom_boutique, siteWeb: row.site_web });
       logError('[apify-prospects] Supabase single-row insert failed', rowError, { code: rowError.code, details: rowError.details, hint: rowError.hint, prospectId: row.id, row });
