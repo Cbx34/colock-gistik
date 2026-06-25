@@ -6,7 +6,22 @@ const DEFAULT_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
 const DEFAULT_MAX_ITEMS = 25;
 const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google Maps'];
 const REQUIRED_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
-const PRIORITY_SHOPIFY_QUERIES = ['bijoux France', 'mode France', 'cosmétique France', 'accessoires France', 'bébé France', 'décoration France'];
+
+const ECOMMERCE_KEYWORD_LIBRARY = [
+  { category: 'MODE', keywords: ['vêtements','chaussures','sneakers','maroquinerie','sacs','bijoux','montres','lunettes','casquettes','accessoires mode','lingerie','robe','costume','streetwear','sportswear'] },
+  { category: 'BEAUTÉ', keywords: ['cosmétiques','maquillage','parfum','soins visage','soins corps','savon','shampoing','barbier','beauté bio','ongles'] },
+  { category: 'MAISON', keywords: ['décoration','mobilier','linge de maison','bougies','art de la table','cuisine','rangement','jardin','plantes'] },
+  { category: 'SPORT', keywords: ['fitness','musculation','crossfit','running','cyclisme','randonnée','yoga','natation','tennis','football'] },
+  { category: 'ANIMAUX', keywords: ['animalerie','chien','chat','aquarium','accessoires animaux'] },
+  { category: 'ENFANTS', keywords: ['jouets','bébé','puériculture','jeux éducatifs'] },
+  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','objets connectés'] },
+  { category: 'ALIMENTAIRE', keywords: ['épicerie','café','thé','compléments alimentaires','nutrition sportive'] },
+  { category: 'LOISIRS', keywords: ['manga','cartes pokemon','figurines','jeux de société','collection'] },
+  { category: 'AUTO MOTO', keywords: ['accessoires auto','accessoires moto'] },
+  { category: 'B2B', keywords: ['emballage','fournitures bureau','équipements professionnels','artisanat'] },
+];
+const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ keywords }) => keywords.map((keyword) => `${keyword} France`));
+const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES;
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
 const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service'];
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -80,17 +95,16 @@ async function readApiError(response) {
 }
 
 function scoreProspect(input) {
-  let score = 2;
   const signals = input.volumeSignaux || [];
-  score += Math.min(4, signals.length);
-  if (input.email) score += 2;
-  if (input.telephone) score += 1;
-  if (input.siteWeb) score += 1;
-  if (input.shopifyVerified) score += 2;
-  if (['Shopify', 'TikTok Shop', 'Etsy', 'eBay', 'Vinted'].includes(String(input.plateforme))) score += 1;
-  if ((input.ville || '').toLowerCase().match(/montpellier|lavérune|laverune|le crès|le cres|nîmes|nimes|sète|sete|béziers|beziers|occitanie/)) score += 1;
-  const finalScore = Math.max(1, Math.min(10, score));
-  return { score: finalScore, classement: finalScore >= 8 ? 'chaud' : finalScore >= 5 ? 'moyen' : 'faible' };
+  const haystack = `${input.pays || ''} ${input.ville || ''} ${signals.join(' ')} ${input.notes || ''}`;
+  let score = 0;
+  if (input.email) score += 5;
+  if (input.telephone) score += 3;
+  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 5;
+  if (input.shopifyVerified) score += 3;
+  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 5;
+  if (input.instagram || input.facebook) score += 5;
+  return { score, classement: score >= 18 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
 }
 
 function normalizeProspect(draft, source = 'Apify') {
