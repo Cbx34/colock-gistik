@@ -28,7 +28,7 @@ create table if not exists prospects (
   volume_signaux text[] not null default '{}',
   source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
   source_url text,
-  source_reelle text not null default 'Inconnue' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
+  source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
   rgpd_source_publique boolean not null default true,
   rgpd_opt_out boolean not null default false,
   notes text,
@@ -80,7 +80,9 @@ create table if not exists interactions (
 );
 
 
-alter table prospects add column if not exists source_reelle text not null default 'Inconnue';
+alter table prospects add column if not exists source_reelle text not null default 'Google Maps';
+update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
+alter table prospects alter column source_reelle set default 'Google Maps';
 alter table prospects drop constraint if exists prospects_source_check;
 alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
 alter table prospects drop constraint if exists prospects_source_reelle_check;
@@ -130,7 +132,7 @@ begin
     volume_signaux text[] not null default '{}',
     source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
     source_url text,
-    source_reelle text not null default 'Inconnue' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
+    source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
     rgpd_source_publique boolean not null default true,
     rgpd_opt_out boolean not null default false,
     notes text,
@@ -183,7 +185,9 @@ begin
     created_at timestamptz not null default now()
   );
 
-  alter table prospects add column if not exists source_reelle text not null default 'Inconnue';
+  alter table prospects add column if not exists source_reelle text not null default 'Google Maps';
+  update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
+  alter table prospects alter column source_reelle set default 'Google Maps';
   alter table prospects drop constraint if exists prospects_source_check;
   alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
   alter table prospects drop constraint if exists prospects_source_reelle_check;
