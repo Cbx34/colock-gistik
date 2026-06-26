@@ -7,7 +7,9 @@ const DEFAULT_MAX_ITEMS = 25;
 const SELECTABLE_SOURCES = ['Shopify', 'Vinted', 'TikTok Shop', 'Etsy', 'Google Maps'];
 const REQUIRED_SHOPIFY_ACTOR_ID = 'clearpath~shopify-store-leads';
 
+const COLOCK_PRIORITY_KEYWORDS = ['mono-produit','dropshipping France','bijoux','cosmétique','vêtements femme','vêtements homme','accessoires','maroquinerie','bébé','jouets','décoration','bougies','animalerie','sport','nutrition sportive','cartes Pokémon','figurines','cadeaux personnalisés','produits personnalisés'];
 const ECOMMERCE_KEYWORD_LIBRARY = [
+  { category: 'PRIORITÉS COLOCK-GISTIK', keywords: COLOCK_PRIORITY_KEYWORDS },
   { category: 'MODE', keywords: ['vêtement','vêtements','vêtements femme','vêtements homme','robe','robe femme','pantalon','jean','chemise','t-shirt','tee-shirt','sweat','pull','veste','manteau','lingerie','sous-vêtements','chaussures','baskets','sneakers','sac','sacs','maroquinerie','montre','montres','bijoux','lunettes','accessoires','accessoires mode','mode femme','mode homme','prêt-à-porter','pret a porter','streetwear','sportswear','costume','casquettes'] },
   { category: 'BEAUTÉ', keywords: ['cosmétique','cosmétiques','maquillage','parfum','soins visage','soins corps','crème','huile','beauté bio','skincare','savon','shampoing','coiffure','esthétique','ongles','bien-être','barbier'] },
   { category: 'MAISON', keywords: ['décoration','meuble','meubles','cuisine','salle de bain','rangement','textile maison','linge de maison','jardin','bricolage','éclairage','mobilier','bougies','art de la table','plantes'] },
@@ -21,7 +23,7 @@ const ECOMMERCE_KEYWORD_LIBRARY = [
 ];
 const QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY = 1000;
 const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ keywords }) => keywords.map((keyword) => `${keyword} France`));
-const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES;
+const PRIORITY_SHOPIFY_QUERIES = Array.from(new Set([...COLOCK_PRIORITY_KEYWORDS.map((keyword) => `${keyword} France`), ...ECOMMERCE_KEYWORD_QUERIES]));
 const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) => Math.max(1, Math.ceil(target / Math.max(1, keywordCount)));
 const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
 const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && (asString(prospect.email) || asString(prospect.telephone) || asString(prospect.instagram) || asString(prospect.facebook)) && (prospect.score || 0) > 65);
@@ -32,7 +34,8 @@ const PHONE_REGEX = /(?:\+33|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
 const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com' };
 const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
 const EXCLUDED_SHOPIFY_LEAD_MARKERS = [/carrefour/i, /grande enseigne/i, /hypermarch[ée]/i, /supermarch[ée]/i, /garde[- ]?meubles?/i, /self[- ]?stockage/i, /d[ée]m[ée]nage/i, /moving company/i, /magasin physique/i, /click and collect uniquement/i];
-const EXCLUDED_FRANCE_COUNTRY_MARKERS = [/\bbelgique\b|\bbelgium\b|\bbe\b/i, /\bsuisse\b|\bswitzerland\b|\bch\b/i, /\bluxembourg\b|\blu\b/i, /\bcanada\b|\bcanadian\b|\bca\b/i];
+const FRANCOPHONE_COUNTRY_MARKERS = [/\bfrance\b|\bfr\b/i, /\bbelgique\b|\bbelgium\b|\bbe\b/i, /\bsuisse\b|\bswitzerland\b|\bch\b/i, /\bluxembourg\b|\blu\b/i];
+const EXCLUDED_FRANCE_COUNTRY_MARKERS = [/\bcanada\b|\bcanadian\b|\bca\b/i, /\busa\b|\bunited states\b|\bus\b/i, /\buk\b|\bunited kingdom\b/i, /\bespagne\b|\bspain\b/i, /\bitalie\b|\bitaly\b/i, /\ballemagne\b|\bgermany\b/i];
 const FRENCH_LEGAL_MARKERS = [/\bSIRET\b/i, /\bSIREN\b/i, /\bRCS\s+[A-ZÀ-ÿ-]+/i, /TVA\s+(intracommunautaire|FR)/i, /\bAPE\b|\bNAF\b/i, /soci[ée]t[ée]\s+(par actions simplifi[ée]e|à responsabilit[ée] limit[ée]e|immatricul[ée]e)/i, /mentions?\s+l[ée]gales?/i];
 
 const asString = (value) => (typeof value === 'string' ? value.trim() : '');
@@ -355,7 +358,12 @@ function isFranceSelected(criteria) {
 }
 
 function hasExcludedCountryMarker(value) {
-  return EXCLUDED_FRANCE_COUNTRY_MARKERS.some((marker) => marker.test(asString(value)));
+  const text = asString(value);
+  return EXCLUDED_FRANCE_COUNTRY_MARKERS.some((marker) => marker.test(text)) && !FRANCOPHONE_COUNTRY_MARKERS.some((marker) => marker.test(text));
+}
+
+function hasFrancophoneMarker(value) {
+  return FRANCOPHONE_COUNTRY_MARKERS.some((marker) => marker.test(asString(value))) || /francophone|fran[çc]ais/i.test(asString(value));
 }
 
 function normalizePhoneForCountry(value) {
@@ -376,19 +384,26 @@ function getFranceVerificationReason(prospect) {
   return '';
 }
 
-function filterFranceProspects(prospects, criteria) {
+function markFranceProspects(prospects, criteria) {
   if (!isFranceSelected(criteria)) return prospects;
-  return prospects
-    .map((prospect) => {
-      const reason = getFranceVerificationReason(prospect);
-      if (!reason) return null;
-      return {
-        ...prospect,
-        pays: 'France',
-        volumeSignaux: Array.from(new Set([...prospect.volumeSignaux, `France vérifiée (${reason})`])),
-      };
-    })
-    .filter(Boolean);
+  return prospects.map((prospect) => {
+    const reason = getFranceVerificationReason(prospect);
+    const haystack = `${prospect.pays || ''} ${prospect.ville || ''} ${prospect.notes || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+    if (!reason && !hasFrancophoneMarker(haystack)) return prospect;
+    return {
+      ...prospect,
+      pays: reason ? 'France' : prospect.pays,
+      volumeSignaux: Array.from(new Set([...prospect.volumeSignaux, reason ? `France vérifiée (${reason})` : 'zone francophone détectée'])),
+    };
+  });
+}
+
+function productSizeLabel(productCount) {
+  if (!productCount) return '';
+  if (productCount >= 1 && productCount <= 10) return 'Mono-produit : 1 à 10 produits';
+  if (productCount <= 50) return 'Petite boutique : 11 à 50 produits';
+  if (productCount <= 100) return 'Boutique moyenne : 51 à 100 produits';
+  return 'Grosse boutique : plus de 100 produits';
 }
 
 async function enrichShopifyContactData(prospect) {
@@ -410,7 +425,7 @@ async function enrichShopifyContactData(prospect) {
   }
   const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => key !== 'frenchLegalNotice' && value && !prospect[key]));
   const productCount = prospect.productCount || await detectShopifyProductCount(prospect.siteWeb);
-  const enriched = normalizeProspect({ ...prospect, ...contactFields, productCount, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', productCount ? `produits détectés: ${productCount}` : '', ...detectedPages, collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
+  const enriched = normalizeProspect({ ...prospect, ...contactFields, productCount, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', productCount ? `produits détectés: ${productCount}` : '', productSizeLabel(productCount), ...detectedPages, collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
   return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle };
 }
 
@@ -471,8 +486,8 @@ function rejectReason(prospect) {
   if (!asString(prospect.siteWeb)) return 'pas de site';
   try { new URL(/^https?:\/\//i.test(prospect.siteWeb) ? prospect.siteWeb : `https://${prospect.siteWeb}`); } catch { return 'domaine invalide'; }
   if (hasExcludedCountryMarker(haystack)) return 'hors France';
-  if (prospect.marketplace) return 'marketplace';
-  if (prospect.largeBrand || isExcludedShopifyLead(prospect)) return /carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea/i.test(haystack) ? 'grande enseigne' : 'marketplace';
+  if (prospect.marketplace || /amazon|cdiscount|rakuten|etsy marketplace|ebay/i.test(haystack)) return 'marketplace';
+  if (prospect.largeBrand || isExcludedShopifyLead(prospect)) return /carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea|grande enseigne/i.test(haystack) ? 'grande enseigne' : 'marketplace';
   if (!prospect.shopifyVerified) return 'pas Shopify vérifié';
   if ((prospect.score || 0) < 15) return 'score trop faible';
   return '';
@@ -630,13 +645,13 @@ async function handler(req, res) {
         isExcludedShopifyLead(prospect) ? 'signal exclusion détecté (import conservé)' : '',
       ].filter(Boolean),
     }));
-    prospects = filterFranceProspects(prospects, criteria);
+    prospects = markFranceProspects(prospects, criteria);
     progress.push(`${prospects.length} prospects Shopify normalisés et scorés`);
     const rejectedProspects = [];
     const exploitable = [];
     prospects.forEach((prospect, index) => {
       const reason = rejectReason(prospect);
-      const rejected = reason && !((reason === 'pas Shopify vérifié' || reason === 'score trop faible') && prospect.siteWeb && prospect.score >= 15 && !prospect.marketplace && !prospect.largeBrand);
+      const rejected = Boolean(reason);
       if (rejected) rejectedProspects.push({ id: prospect.id, nomBoutique: prospect.nomBoutique, siteWeb: prospect.siteWeb, score: prospect.score, reason, raw: safeItems[index] });
       else exploitable.push(prospect);
     });
