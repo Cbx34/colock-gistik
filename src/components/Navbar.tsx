@@ -1,6 +1,6 @@
-import { BarChart3, Bot, Calculator, ChevronRight, Command, LineChart, PackageCheck, Settings, Truck, Users, Warehouse } from 'lucide-react';
+import { Activity, BarChart3, Bot, Calculator, ChevronRight, Command, LineChart, PackageCheck, Settings, Truck, Users, Warehouse } from 'lucide-react';
 
-export type PageKey = 'dashboard' | 'logistique' | 'prospection' | 'clients' | 'transporteurs' | 'comptabilite' | 'statistiques' | 'settings' | 'search' | 'shopifyRaw' | 'priority' | 'rejections' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'campaigns' | 'export';
+export type PageKey = 'dashboard' | 'logistique' | 'prospection' | 'clients' | 'transporteurs' | 'comptabilite' | 'statistiques' | 'settings' | 'search' | 'shopifyRaw' | 'priority' | 'rejections' | 'prospects' | 'prospect' | 'messages' | 'followups' | 'campaigns' | 'export' | 'debug';
 export type NavItem = { key: PageKey; label: string; icon: typeof BarChart3; section: string };
 
 export const navItems: NavItem[] = [
@@ -12,6 +12,7 @@ export const navItems: NavItem[] = [
   { key: 'comptabilite', label: 'Comptabilité', icon: Calculator, section: 'Finance' },
   { key: 'statistiques', label: 'Statistiques', icon: LineChart, section: 'Analyse' },
   { key: 'settings', label: 'Paramètres', icon: Settings, section: 'Admin' },
+  { key: 'debug', label: 'Santé système', icon: Activity, section: 'Debug' },
 ];
 
 export default function Navbar({ activePage }: { activePage: PageKey }) {

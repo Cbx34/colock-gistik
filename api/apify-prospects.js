@@ -748,7 +748,11 @@ async function handler(req, res) {
       const apifyRes = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(token)}`);
       if (apifyRes.status === 401 || apifyRes.status === 403) return res.status(403).json({ status: 'invalid-token', message: 'Token Apify invalide', tokenSource });
       if (!apifyRes.ok) return res.status(502).json({ status: 'network-error', message: await readApiError(apifyRes), tokenSource });
-      return res.status(200).json({ status: 'connected', message: 'Apify connecté ✅', tokenSource });
+      const actorRes = await fetch(`https://api.apify.com/v2/acts/${encodeURIComponent(REQUIRED_SHOPIFY_ACTOR_ID)}?token=${encodeURIComponent(token)}`);
+      if (actorRes.status === 401 || actorRes.status === 403) return res.status(403).json({ status: 'invalid-token', message: 'Token Apify invalide', tokenSource });
+      if (actorRes.status === 404) return res.status(404).json({ status: 'network-error', message: 'Acteur Apify inaccessible ❌', tokenSource, actorStatus: 'inaccessible' });
+      if (!actorRes.ok) return res.status(502).json({ status: 'network-error', message: `Erreur réseau Apify ❌ ${await readApiError(actorRes)}`, tokenSource, actorStatus: 'erreur' });
+      return res.status(200).json({ status: 'connected', message: 'Apify connecté ✅', tokenSource, actorStatus: 'clearpath/shopify-store-leads accessible' });
     } catch (error) {
       logError('[apify-prospects] Apify connection test failed', error);
       return res.status(502).json({ status: 'network-error', message: 'Erreur réseau ❌', tokenSource });
