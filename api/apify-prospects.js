@@ -26,7 +26,7 @@ const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ keywords 
 const PRIORITY_SHOPIFY_QUERIES = Array.from(new Set([...COLOCK_PRIORITY_KEYWORDS.map((keyword) => `${keyword} France`), ...ECOMMERCE_KEYWORD_QUERIES]));
 const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) => Math.max(1, Math.ceil(target / Math.max(1, keywordCount)));
 const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
-const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && (asString(prospect.email) || asString(prospect.telephone) || asString(prospect.instagram) || asString(prospect.facebook)) && (prospect.score || 0) > 65);
+const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && (asString(prospect.email) || asString(prospect.telephone) || prospect.hasContactForm) && (prospect.score || 0) > 65);
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
 const CONTACT_PATHS = ['/', '/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/livraison', '/pages/livraison', '/pages/expedition', '/shipping', '/policies/shipping-policy', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service', '/policies/privacy-policy', '/policies/refund-policy', '/pages/retours', '/sitemap.xml'];
 const EMAIL_REGEX = /[A-Z0-9._%+-]+(?:\s*(?:\[at\]|\(at\)|@)\s*)[A-Z0-9.-]+(?:\s*(?:\[dot\]|\(dot\)|\.)\s*)[A-Z]{2,}/gi;
@@ -143,6 +143,8 @@ function detectProspectSignals(input) {
     hasReturnPolicy: input.hasReturnPolicy ?? /politique de retour|retours?|returns?|refund/i.test(haystack),
     professionalDomain: input.professionalDomain ?? Boolean(input.siteWeb && !/(myshopify\.com|wixsite|wordpress\.com|blogspot|example\.)/i.test(input.siteWeb)),
     shipsToFrance: input.shipsToFrance ?? /expédition France|livraison France|ships to France|shipping to France/i.test(haystack),
+    activeStore: input.activeStore ?? /add[- ]?to[- ]?cart|checkout|panier|nouveaut[ée]s|en stock|prix|€/i.test(haystack),
+    internalLogistics: input.internalLogistics ?? /logistique interne|notre entrep[oô]t|nos entrep[oô]ts|exp[ée]di[ée]s? par nos soins|pr[ée]par[ée]s? dans nos ateliers|depuis notre atelier/i.test(haystack),
     recentStore: input.recentStore ?? /boutique récente|new store|nouvelle boutique|lancée? en 202[4-6]/i.test(haystack),
     strongAdPresence: input.strongAdPresence ?? /Meta Ads|Facebook Ads|TikTok Ads|ads library|publicit[ée] active|forte présence publicitaire/i.test(haystack),
     marketplace: input.marketplace ?? /marketplace|amazon|cdiscount|fnac|rakuten|etsy marketplace|ebay/i.test(haystack),
@@ -484,7 +486,7 @@ async function enrichShopifyContactData(prospect) {
   }
   const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => ['email','telephone','instagram','facebook','tiktok','linkedin','whatsapp'].includes(key) && value && !prospect[key]));
   const productCount = prospect.productCount || await detectShopifyProductCount(prospect.siteWeb);
-  const scoreInput = { ...prospect, ...contactFields, productCount, hasContactForm: collected.hasContactForm || prospect.hasContactForm, hasShippingPage: collected.hasShippingPage || prospect.hasShippingPage, hasReturnPolicy: prospect.hasReturnPolicy, shipsToFrance: prospect.shipsToFrance || collected.hasShippingPage, inactiveStore: prospect.inactiveStore ?? !collected.activeStore };
+  const scoreInput = { ...prospect, ...contactFields, productCount, hasContactForm: collected.hasContactForm || prospect.hasContactForm, hasShippingPage: collected.hasShippingPage || prospect.hasShippingPage, hasReturnPolicy: prospect.hasReturnPolicy, shipsToFrance: prospect.shipsToFrance || collected.hasShippingPage, activeStore: prospect.activeStore || collected.activeStore, internalLogistics: prospect.internalLogistics || collected.internalLogistics, inactiveStore: prospect.inactiveStore ?? !collected.activeStore };
   const detailed = scoreProspectDetailed(scoreInput);
   const scoreDetails = detailed.details.map((item) => `${item.points > 0 ? '+' : ''}${item.points} ${item.label}`).join(' · ');
   const signals = [

@@ -27,7 +27,7 @@ export const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ ca
 export type Prospect = {
   id: string; nomBoutique: string; siteWeb?: string; instagram?: string; facebook?: string; tiktok?: string; linkedin?: string; whatsapp?: string; email?: string; telephone?: string;
   plateforme: Platform; typeProduits: string; ville: string; pays: string; score: number; classement: Ranking; statutContact: ContactStatus;
-  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; productCount?: number; isMonoProduct?: boolean; niche?: string; hasContactForm?: boolean; hasShippingPage?: boolean; hasReturnPolicy?: boolean; professionalDomain?: boolean; instagramActive?: boolean; facebookActive?: boolean; tiktokActive?: boolean; shipsToFrance?: boolean; recentStore?: boolean; strongAdPresence?: boolean; marketplace?: boolean; largeBrand?: boolean; inactiveStore?: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
+  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; productCount?: number; isMonoProduct?: boolean; niche?: string; hasContactForm?: boolean; hasShippingPage?: boolean; hasReturnPolicy?: boolean; professionalDomain?: boolean; instagramActive?: boolean; facebookActive?: boolean; tiktokActive?: boolean; shipsToFrance?: boolean; activeStore?: boolean; internalLogistics?: boolean; scoreDetails?: string[]; recentStore?: boolean; strongAdPresence?: boolean; marketplace?: boolean; largeBrand?: boolean; inactiveStore?: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
 };
 
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
@@ -50,7 +50,7 @@ export const DEFAULT_APIFY_SHOPIFY_ACTOR_ID = 'clearpath/shopify-store-leads';
 export const COLOCK_PRIORITY_KEYWORDS = ['mono-produit','dropshipping France','bijoux','cosmétique','vêtements femme','vêtements homme','accessoires','maroquinerie','bébé','jouets','décoration','bougies','animalerie','sport','nutrition sportive','cartes Pokémon','figurines','cadeaux personnalisés','produits personnalisés'];
 export const PRIORITY_SHOPIFY_QUERIES = Array.from(new Set([...COLOCK_PRIORITY_KEYWORDS.map((keyword) => `${keyword} France`), ...ECOMMERCE_KEYWORD_QUERIES.map((item) => item.query)]));
 export function qualifiedTargetPerKeyword(keywordCount: number, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) { return Math.max(1, Math.ceil(target / Math.max(1, keywordCount))); }
-export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return Boolean(prospect.shopifyVerified && (prospect.email || prospect.telephone || prospect.instagram || prospect.facebook) && (prospect.score ?? 0) > 65); }
+export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return Boolean(prospect.shopifyVerified && (prospect.email || prospect.telephone || prospect.hasContactForm) && (prospect.score ?? 0) > 65); }
 export function isPriorityProspect(prospect: Partial<Prospect>) { return isQualifiedShopifyProspect(prospect) && /France|Belgique|Suisse|Luxembourg|francophone/i.test(`${prospect.pays ?? ''} ${prospect.ville ?? ''} ${prospect.volumeSignaux?.join(' ') ?? ''}`); }
 
 const nowIso = () => new Date().toISOString();
@@ -91,6 +91,8 @@ export function detectProspectSignals(input: Partial<Prospect> & { volumeSignaux
     hasReturnPolicy,
     professionalDomain,
     shipsToFrance,
+    activeStore: input.activeStore ?? /add[- ]?to[- ]?cart|checkout|panier|nouveaut[ée]s|en stock|prix|€/i.test(haystack),
+    internalLogistics: input.internalLogistics ?? /logistique interne|notre entrep[oô]t|nos entrep[oô]ts|exp[ée]di[ée]s? par nos soins|pr[ée]par[ée]s? dans nos ateliers|depuis notre atelier/i.test(haystack),
     recentStore: input.recentStore ?? /boutique récente|new store|nouvelle boutique|lancée? en 202[4-6]/i.test(haystack),
     strongAdPresence: input.strongAdPresence ?? /Meta Ads|Facebook Ads|TikTok Ads|ads library|publicit[ée] active|forte présence publicitaire/i.test(haystack),
     marketplace: input.marketplace ?? /marketplace|amazon|cdiscount|fnac|rakuten|etsy marketplace|ebay/i.test(haystack),
@@ -99,29 +101,38 @@ export function detectProspectSignals(input: Partial<Prospect> & { volumeSignaux
   };
 }
 
-export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
+export function scoreProspectDetailed(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking; details: string[] } {
   const d = detectProspectSignals(input);
-  let score = 0;
-  if (input.shopifyVerified) score += 20;
-  if (input.email) score += 20;
-  if (input.telephone) score += 10;
-  if (d.countryFrance) score += 15;
-  if (d.instagramActive) score += 10;
-  if (d.facebookActive) score += 10;
-  if (d.tiktokActive) score += 10;
-  if (d.isMonoProduct || (d.productCount && d.productCount <= 10)) score += 15;
-  if (d.productCount && d.productCount < 50) score += 10;
-  if (d.hasShippingPage) score += 10;
-  if (!d.inactiveStore) score += 10;
-  if (d.hasContactForm) score += 10;
-  if (d.marketplace) score -= 30;
-  if (d.largeBrand) score -= 30;
-  if (d.productCount && d.productCount > 100) score -= 20;
-  if (d.inactiveStore) score -= 20;
-  if (!input.email && !input.telephone && !input.instagram && !input.facebook && !input.tiktok && !d.hasContactForm) score -= 15;
-  if (!d.countryFrance && /hors Europe francophone|outside french europe/i.test(`${input.notes ?? ''} ${input.volumeSignaux?.join(' ') ?? ''}`)) score -= 15;
-  score = Math.max(0, Math.min(100, score));
-  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible' };
+  const lines: { label: string; points: number; ok: boolean }[] = [
+    { label: 'Shopify vérifié', points: 20, ok: Boolean(input.shopifyVerified) },
+    { label: 'Email trouvé', points: 25, ok: Boolean(input.email) },
+    { label: 'Téléphone trouvé', points: 15, ok: Boolean(input.telephone) },
+    { label: 'Formulaire de contact détecté', points: 15, ok: Boolean(d.hasContactForm) },
+    { label: 'Zone France/francophone', points: 15, ok: Boolean(d.countryFrance) },
+    { label: 'Instagram actif', points: 8, ok: Boolean(d.instagramActive) },
+    { label: 'Facebook actif', points: 8, ok: Boolean(d.facebookActive) },
+    { label: 'TikTok actif', points: 8, ok: Boolean(d.tiktokActive) },
+    { label: 'WhatsApp détecté', points: 5, ok: Boolean(d.whatsapp) },
+    { label: 'Mono-produit', points: 12, ok: Boolean(d.isMonoProduct || (d.productCount && d.productCount <= 10)) },
+    { label: 'Petite boutique', points: 8, ok: Boolean(d.productCount && d.productCount > 10 && d.productCount <= 50) },
+    { label: 'Livraison/expéditions présentes', points: 10, ok: Boolean(d.hasShippingPage || d.shipsToFrance) },
+    { label: 'Boutique active', points: 10, ok: !d.inactiveStore },
+    { label: 'Logistique interne détectée', points: -10, ok: Boolean(d.internalLogistics) },
+    { label: 'Marketplace détectée', points: -30, ok: Boolean(d.marketplace) },
+    { label: 'Grande enseigne détectée', points: -30, ok: Boolean(d.largeBrand) },
+    { label: 'Catalogue > 100 produits', points: -20, ok: Boolean(d.productCount && d.productCount > 100) },
+    { label: 'Boutique inactive', points: -20, ok: Boolean(d.inactiveStore) },
+    { label: 'Aucun contact qualifiant', points: -20, ok: !input.email && !input.telephone && !d.hasContactForm },
+    { label: 'Hors Europe francophone', points: -15, ok: !d.countryFrance && /hors Europe francophone|outside french europe/i.test(`${input.notes ?? ''} ${input.volumeSignaux?.join(' ') ?? ''}`) },
+  ];
+  const applied = lines.filter((line) => line.ok);
+  const score = Math.max(0, Math.min(100, applied.reduce((sum, line) => sum + line.points, 0)));
+  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible', details: applied.map((line) => `${line.points > 0 ? '+' : ''}${line.points} ${line.label}`) };
+}
+
+export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
+  const { score, classement } = scoreProspectDetailed(input);
+  return { score, classement };
 }
 
 export function resolveRealSource(platform: SearchCriteria['platform'] | Platform | ImportSource): RealSource {
@@ -134,9 +145,9 @@ export function isGoogleMapsActor(actorId: string) {
 }
 
 export function normalizeProspect(draft: ProspectImportDraft, source: ImportSource = 'CSV'): Prospect {
-  const scored = scoreProspect(draft);
+  const scored = scoreProspectDetailed(draft);
   const sourceReelle = draft.sourceReelle ?? resolveRealSource(source === 'Apify' ? draft.plateforme ?? 'Inconnue' : source);
-  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, ...detectProspectSignals(draft), statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
+  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', score: scored.score, classement: scored.classement, scoreDetails: scored.details, ...detectProspectSignals(draft), statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
 }
 
 export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
