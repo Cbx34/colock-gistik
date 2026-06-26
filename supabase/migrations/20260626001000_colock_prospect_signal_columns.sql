@@ -11,6 +11,8 @@ alter table prospects add column if not exists instagram_active boolean default 
 alter table prospects add column if not exists facebook_active boolean default false;
 alter table prospects add column if not exists tiktok_active boolean default false;
 alter table prospects add column if not exists ships_to_france boolean default false;
+alter table prospects add column if not exists active_store boolean default false;
+alter table prospects add column if not exists internal_logistics boolean default false;
 alter table prospects add column if not exists recent_store boolean default false;
 alter table prospects add column if not exists strong_ad_presence boolean default false;
 alter table prospects add column if not exists marketplace boolean default false;
