@@ -737,6 +737,23 @@ async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Méthode non autorisée' });
 
   const body = req.body || {};
+  if (body.mode === 'apify-test') {
+    const envToken = readEnv('APIFY_TOKEN');
+    const fallbackToken = readEnv('VITE_APIFY_TOKEN');
+    const bodyToken = asString(body.token);
+    const token = envToken || fallbackToken || bodyToken;
+    const tokenSource = envToken ? 'APIFY_TOKEN' : fallbackToken ? 'VITE_APIFY_TOKEN' : bodyToken ? 'client' : 'absent';
+    if (!token) return res.status(401).json({ status: 'missing-token', message: 'Token Apify manquant', tokenSource });
+    try {
+      const apifyRes = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(token)}`);
+      if (apifyRes.status === 401 || apifyRes.status === 403) return res.status(403).json({ status: 'invalid-token', message: 'Token Apify invalide', tokenSource });
+      if (!apifyRes.ok) return res.status(502).json({ status: 'network-error', message: await readApiError(apifyRes), tokenSource });
+      return res.status(200).json({ status: 'connected', message: 'Apify connecté ✅', tokenSource });
+    } catch (error) {
+      logError('[apify-prospects] Apify connection test failed', error);
+      return res.status(502).json({ status: 'network-error', message: 'Erreur réseau ❌', tokenSource });
+    }
+  }
   if (body.mode === 'enrich-existing') {
     try {
       const result = await enrichExistingProspects();
@@ -756,7 +773,7 @@ async function handler(req, res) {
   if (!criteria) return res.status(400).json({ error: 'Critères de recherche manquants' });
   if (isGoogleMapsActor(actorId)) return res.status(400).json({ error: 'Google Maps est totalement interdit pour Shopify.' });
   if (actorId !== REQUIRED_SHOPIFY_ACTOR_ID) return res.status(400).json({ error: 'Actor Apify autorisé uniquement : clearpath/shopify-store-leads.' });
-  if (!token) return res.status(401).json({ error: 'APIFY_TOKEN manquant côté serveur Vercel' });
+  if (!token) return res.status(401).json({ error: 'Token Apify manquant', status: 'missing-token' });
 
   progress.push('Token detected');
   const input = buildApifyShopifyInput({ ...criteria, platform: 'Shopify', location: criteria.location || 'France' }, maxItems);
@@ -766,7 +783,7 @@ async function handler(req, res) {
     const apifyRes = await fetch(apifyUrl, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
     progress.push('Actor launched');
     if (!apifyRes.ok) {
-      const message = await readApiError(apifyRes);
+      const message = apifyRes.status === 401 || apifyRes.status === 403 ? 'Token Apify invalide' : await readApiError(apifyRes);
       logError('[apify-prospects] Apify actor request failed', new Error(message), { status: apifyRes.status, actorId, query: input.searchStringsArray?.[0] || input.query });
       throw new Error(message);
     }
