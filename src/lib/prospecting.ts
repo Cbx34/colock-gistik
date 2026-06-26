@@ -280,6 +280,18 @@ export async function fetchApifyProspects(actorId: string, token: string, criter
   return result;
 }
 
+export async function enrichExistingProspects(onProgress?: (progress: ApifyProgress) => void): Promise<ApifyImportResult> {
+  const proxyRes = await fetch('/api/apify-prospects', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: 'enrich-existing' }),
+  });
+  if (!proxyRes.ok) throw new Error(await readApifyError(proxyRes));
+  const result = await proxyRes.json() as ApifyImportResult;
+  (result.progress ?? []).forEach((message) => onProgress?.({ step: 'prospects-inserted', message }));
+  return result;
+}
+
 export function generateMessage(prospect: Prospect, step: 0 | 3 | 7 = 0) {
   const firstLine = prospect.typeProduits ? `J’ai vu votre boutique ${prospect.nomBoutique} autour de ${prospect.typeProduits}.` : `J’ai vu votre boutique ${prospect.nomBoutique}.`;
   const local = prospect.ville ? ` depuis Montpellier / Lavérune / Le Crès vers vos clients` : ' depuis Montpellier / Lavérune / Le Crès';
