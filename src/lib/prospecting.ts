@@ -1,8 +1,8 @@
 export type Platform = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'eBay' | 'Dropshipping' | 'Marque e-commerce' | 'Inconnue';
 export type Ranking = 'ultra-chaud' | 'chaud' | 'moyen' | 'faible';
 export type ContactStatus = 'Nouveau' | 'Contacté' | 'Relance J+3' | 'Relance J+7' | 'Client signé' | 'Supprimé';
-export type ImportSource = 'Apify' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo';
-export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo' | 'Inconnue';
+export type ImportSource = 'Apify' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Instagram' | 'Google' | 'Google Maps' | 'CSV' | 'Démo';
+export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Instagram' | 'Google' | 'Google Maps' | 'CSV' | 'Démo' | 'Inconnue';
 
 
 export type EcommerceKeywordCategory = { category: string; keywords: string[] };
@@ -136,7 +136,7 @@ export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: strin
 }
 
 export function resolveRealSource(platform: SearchCriteria['platform'] | Platform | ImportSource): RealSource {
-  if (platform === 'Shopify' || platform === 'Vinted' || platform === 'TikTok Shop' || platform === 'Etsy' || platform === 'Google Maps' || platform === 'CSV' || platform === 'Démo') return platform;
+  if (platform === 'Shopify' || platform === 'Vinted' || platform === 'TikTok Shop' || platform === 'Etsy' || platform === 'Instagram' || platform === 'Google' || platform === 'Google Maps' || platform === 'CSV' || platform === 'Démo') return platform;
   return 'Inconnue';
 }
 
