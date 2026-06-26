@@ -36,6 +36,8 @@ export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
 export type RejectedProspect = { id: string; nomBoutique: string; siteWeb?: string; score: number; reason: string; raw?: Record<string, unknown> };
 export type ImportReport = { rawCount: number; normalizedCount: number; insertedCount: number; duplicateCount: number; rejectedCount: number; rejectionReasons: Record<string, number>; supabaseErrors?: string[] };
 export type ApifyImportResult = { prospects: Prospect[]; rejectedProspects?: RejectedProspect[]; report?: ImportReport; rawItems?: Record<string, unknown>[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
+export type ApifyConnectionStatus = 'connected' | 'missing-token' | 'invalid-token' | 'network-error';
+export type ApifyConnectionResult = { status: ApifyConnectionStatus; message: string; tokenSource?: string };
 export type AutoProspectingQuota = 100 | 500 | 1000 | 'illimité';
 export type AutoSearchHistoryEntry = { id: string; country: string; niche: string; keyword: string; query: string; searchedAt: string; insertedCount: number; duplicateCount: number; qualifiedCount: number };
 export type ProspectChannelMessages = { email: string; linkedin: string; instagram: string; sms: string; followUpJ3: string; followUpJ7: string };
@@ -268,6 +270,25 @@ async function readApifyError(res: Response) {
 
 function normalizeApifyActorId(actorId: string) {
   return actorId.trim().replace(/^https:\/\/api\.apify\.com\/v2\/acts\//, '').replace(/^https:\/\/console\.apify\.com\/actors\//, '').replace(/\//g, '~');
+}
+
+export async function testApifyConnection(token: string): Promise<ApifyConnectionResult> {
+  const cleanToken = token.trim();
+  let proxyRes: Response;
+  try {
+    proxyRes = await fetch('/api/apify-prospects', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'apify-test', token: cleanToken || undefined }),
+    });
+  } catch {
+    return { status: 'network-error', message: 'Erreur réseau ❌' };
+  }
+  const body = await proxyRes.json().catch(() => ({})) as Partial<ApifyConnectionResult> & { error?: string };
+  if (body.status === 'connected') return { status: 'connected', message: 'Apify connecté ✅', tokenSource: body.tokenSource };
+  if (body.status === 'missing-token' || proxyRes.status === 401) return { status: 'missing-token', message: 'Token manquant ❌', tokenSource: body.tokenSource };
+  if (body.status === 'invalid-token' || proxyRes.status === 403) return { status: 'invalid-token', message: 'Token invalide ❌', tokenSource: body.tokenSource };
+  return { status: 'network-error', message: body.message || body.error || 'Erreur réseau ❌', tokenSource: body.tokenSource };
 }
 
 export async function fetchApifyProspects(actorId: string, token: string, criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS, onProgress?: (progress: ApifyProgress) => void): Promise<ApifyImportResult> {
