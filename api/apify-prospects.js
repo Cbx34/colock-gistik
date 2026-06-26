@@ -44,6 +44,7 @@ const nowIso = () => new Date().toISOString();
 const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
+const PROSPECT_SIGNAL_COLUMNS = ['whatsapp','product_count','is_mono_product','niche','has_contact_form','has_shipping_page','has_return_policy','professional_domain','instagram_active','facebook_active','tiktok_active','ships_to_france','recent_store','strong_ad_presence','marketplace','large_brand','inactive_store'];
 const PROSPECT_CHECK_CONSTRAINTS = {
   prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
   prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
@@ -200,9 +201,11 @@ function normalizeProspect(draft, source = 'Apify') {
   };
 }
 
-function toDb(p, includeSourceReelle = true, includeShopifyVerified = true, includeFacebook = true) {
+function toDb(p, includeSourceReelle = true, includeShopifyVerified = true, includeFacebook = true, includeSignalColumns = PROSPECT_SIGNAL_COLUMNS) {
   const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
   if (includeFacebook) row.facebook = p.facebook;
+  const signalValues = { whatsapp: p.whatsapp, product_count: p.productCount, is_mono_product: p.isMonoProduct, niche: p.niche, has_contact_form: p.hasContactForm, has_shipping_page: p.hasShippingPage, has_return_policy: p.hasReturnPolicy, professional_domain: p.professionalDomain, instagram_active: p.instagramActive, facebook_active: p.facebookActive, tiktok_active: p.tiktokActive, ships_to_france: p.shipsToFrance, recent_store: p.recentStore, strong_ad_presence: p.strongAdPresence, marketplace: p.marketplace, large_brand: p.largeBrand, inactive_store: p.inactiveStore };
+  Object.entries(signalValues).forEach(([key, value]) => { if (includeSignalColumns.includes(key)) row[key] = value; });
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
   if (includeShopifyVerified) row.shopify_verified = p.shopifyVerified || false;
   return row;
@@ -211,17 +214,20 @@ function toDb(p, includeSourceReelle = true, includeShopifyVerified = true, incl
 const isMissingShopifyVerifiedColumn = (error) => error?.code === 'PGRST204' || /shopify_verified|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 const isMissingSourceReelleColumn = (error) => error?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
 const isMissingFacebookColumn = (error) => error?.code === 'PGRST204' || /facebook|schema cache|Could not find .* column/i.test([error?.message, error?.details, error?.hint].filter(Boolean).join(' '));
+const missingSignalColumn = (error) => PROSPECT_SIGNAL_COLUMNS.find((column) => [error?.message, error?.details, error?.hint].filter(Boolean).join(' ').includes(column)) || '';
 
 async function detectOptionalProspectColumns(supabase) {
-  const [sourceReelleProbe, shopifyVerifiedProbe, facebookProbe] = await Promise.all([
+  const [sourceReelleProbe, shopifyVerifiedProbe, facebookProbe, signalProbe] = await Promise.all([
     supabase.from('prospects').select('source_reelle').limit(1),
     supabase.from('prospects').select('shopify_verified').limit(1),
     supabase.from('prospects').select('facebook').limit(1),
+    supabase.from('prospects').select(PROSPECT_SIGNAL_COLUMNS.join(',')).limit(1),
   ]);
   return {
     sourceReelle: !sourceReelleProbe.error || !isMissingSourceReelleColumn(sourceReelleProbe.error),
     shopifyVerified: !shopifyVerifiedProbe.error || !isMissingShopifyVerifiedColumn(shopifyVerifiedProbe.error),
     facebook: !facebookProbe.error || !isMissingFacebookColumn(facebookProbe.error),
+    signalColumns: signalProbe.error ? [] : PROSPECT_SIGNAL_COLUMNS.slice(),
   };
 }
 
@@ -479,7 +485,7 @@ async function insertProspects(prospects) {
       ignored += 1;
       continue;
     }
-    rows.push(toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified, optionalColumns.facebook));
+    rows.push(toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified, optionalColumns.facebook, optionalColumns.signalColumns));
     if (email) seenEmails.add(email);
     if (site) seenSites.add(site);
   }
@@ -493,9 +499,16 @@ async function insertProspects(prospects) {
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
+  const absentSignalColumn = missingSignalColumn(error);
+  if (error && absentSignalColumn) {
+    optionalColumns.signalColumns = optionalColumns.signalColumns.filter((column) => column !== absentSignalColumn);
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified, optionalColumns.facebook, optionalColumns.signalColumns));
+    const retry = await supabase.from('prospects').insert(safeRows);
+    error = retry.error;
+  }
   if (error && isMissingSourceReelleColumn(error)) {
     optionalColumns.sourceReelle = false;
-    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false, optionalColumns.shopifyVerified, optionalColumns.facebook));
+    safeRows = prospects.filter((prospect) => rows.some((row) => row.id === prospect.id)).map((prospect) => toDb(prospect, false, optionalColumns.shopifyVerified, optionalColumns.facebook, optionalColumns.signalColumns));
     const retry = await supabase.from('prospects').insert(safeRows);
     error = retry.error;
   }
