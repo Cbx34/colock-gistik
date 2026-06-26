@@ -71,8 +71,15 @@ const describeCheckViolation = (error, row = {}) => {
   };
 };
 const isCheckViolation = (error) => error?.code === '23514' || Boolean(getCheckConstraintName(error));
-const firstString = (item, keys) => keys.map((key) => asString(item[key] == null ? '' : String(item[key]))).find(Boolean) || '';
-const firstNumber = (item, keys) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+const asRecord = (value) => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+const firstString = (item, keys) => {
+  const record = asRecord(item);
+  return (Array.isArray(keys) ? keys : []).map((key) => asString(record[key] == null ? '' : String(record[key]))).find(Boolean) || '';
+};
+const firstNumber = (item, keys) => {
+  const record = asRecord(item);
+  return (Array.isArray(keys) ? keys : []).map((key) => Number(record[key])).find((value) => Number.isFinite(value));
+};
 const describeError = (error) => {
   if (error instanceof Error) {
     return { message: error.message, name: error.name, stack: error.stack };
@@ -764,10 +771,17 @@ async function handler(req, res) {
       throw new Error(message);
     }
 
-    const items = await apifyRes.json();
+    const rawApifyResponse = await apifyRes.json().catch((error) => {
+      logError('[apify-prospects] Apify JSON parse failed', error, { actorId });
+      return undefined;
+    });
+    console.log('[apify-prospects] Raw Apify response:', rawApifyResponse);
     progress.push('Dataset retrieved');
-    const safeItems = Array.isArray(items) ? items : [];
-    progress.push(`${safeItems.length} results found`);
+    if (!Array.isArray(rawApifyResponse)) {
+      logError('[apify-prospects] Apify response is not an array', new Error('Unexpected Apify response shape'), { actorId, rawType: typeof rawApifyResponse, rawApifyResponse });
+    }
+    const safeItems = Array.isArray(rawApifyResponse) ? rawApifyResponse.filter((item) => item && typeof item === 'object' && !Array.isArray(item)) : [];
+    progress.push(safeItems.length ? `${safeItems.length} results found` : 'Aucun prospect trouvé.');
     let prospects = await Promise.all(safeItems.map(async (item) => enrichShopifyContactData(apifyShopifyItemToProspect(item, { ...criteria, platform: 'Shopify' }))));
     const verified = await Promise.all(prospects.map(async (prospect) => {
       const check = await verifyShopifySite(prospect.siteWeb);
@@ -787,6 +801,7 @@ async function handler(req, res) {
       ].filter(Boolean),
     }));
     prospects = markFranceProspects(prospects, criteria);
+    progress.push(prospects.length ? `${prospects.length} prospects trouvés.` : 'Aucun prospect trouvé.');
     progress.push(`${prospects.length} prospects Shopify normalisés et scorés`);
     const rejectedProspects = [];
     const exploitable = [];

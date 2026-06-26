@@ -89,31 +89,36 @@ export default function App() {
   const importCsv = (source: 'CSV' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy') => { const result = importProspects(parseCsvProspects(importText, source)); setApifyMessages([formatImportSummary(result.added, result.merged)]); };
   const addApifyMessage = (message: string) => setApifyMessages((current) => [...current, message]);
   const runApify = async () => {
-    setApifyMessages([]);
+    setApifyMessages(['Recherche en cours…']);
     setApifyLoading(true);
     try {
       const result = await fetchApifyProspects(apifyActor, apifyToken, criteria, undefined, (progress: ApifyProgress) => addApifyMessage(progress.message));
-      setShopifyRawResults(result.rawItems ?? []);
-      setRejectedProspects(result.rejectedProspects ?? []);
-      if (result.report) addApifyMessage(`Rapport détaillé : ${result.report.rawCount} bruts Apify · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
+      console.log('[runApify] Réponse brute recherche Shopify', result);
+      const safeProspects = Array.isArray(result.prospects) ? result.prospects : [];
+      const safeRawItems = Array.isArray(result.rawItems) ? result.rawItems : [];
+      setShopifyRawResults(safeRawItems);
+      setRejectedProspects(Array.isArray(result.rejectedProspects) ? result.rejectedProspects : []);
+      addApifyMessage(safeProspects.length ? `${safeProspects.length} prospects trouvés.` : 'Aucun prospect trouvé.');
+      if (result.report) addApifyMessage(`Rapport détaillé : ${result.report.rawCount} bruts Apify · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
       if (typeof result.insertedCount === 'number') addApifyMessage(`${result.insertedCount} prospects insérés exactement dans Supabase`);
       if (connection.connected) {
         try {
-          const refreshed = await syncProspectsWithSupabase(result.prospects);
+          const refreshed = await syncProspectsWithSupabase(safeProspects);
           setProspects(refreshed);
         } catch (error) {
-          const merged = mergeProspects(prospects, result.prospects);
+          const merged = mergeProspects(prospects, safeProspects);
           setProspects(merged.prospects);
           addApifyMessage(`Erreur Supabase non bloquante : ${error instanceof Error ? error.message : 'synchronisation impossible'}`);
         }
       } else {
-        const merged = mergeProspects(prospects, result.prospects);
+        const merged = mergeProspects(prospects, safeProspects);
         setProspects(merged.prospects);
         addApifyMessage(formatImportSummary(merged.added, merged.merged));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur Apify inconnue';
-      addApifyMessage(`Erreur exacte : ${message}`);
+      console.error('[runApify] Erreur de connexion Apify', error);
+      addApifyMessage(`Erreur de connexion Apify. ${message}`);
     } finally {
       setApifyLoading(false);
     }
@@ -165,7 +170,7 @@ export default function App() {
             }
             setShopifyRawResults(result.rawItems ?? []);
             setRejectedProspects((current) => [...current, ...(result.rejectedProspects ?? [])].slice(-1000));
-            if (result.report) addApifyMessage(`Rapport ${keyword} : ${result.report.rawCount} bruts · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
+            if (result.report) addApifyMessage(`Rapport ${keyword} : ${result.report.rawCount} bruts · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
             if (connection.connected) {
               try { setProspects(await syncProspectsWithSupabase(result.prospects)); }
               catch (error) { setProspects((current) => mergeProspects(current, result.prospects).prospects); addApifyMessage(`Erreur Supabase non bloquante : ${error instanceof Error ? error.message : 'synchronisation impossible'}`); }

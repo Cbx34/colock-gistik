@@ -177,8 +177,15 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
 }
 
 const asCleanString = (value: unknown) => typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
-const firstString = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => asCleanString(item[key])).find(Boolean) ?? '';
-const firstNumber = (item: Record<string, unknown>, keys: string[]) => keys.map((key) => Number(item[key])).find((value) => Number.isFinite(value));
+const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+const firstString = (item: Record<string, unknown>, keys: string[]) => {
+  const record = asRecord(item);
+  return (Array.isArray(keys) ? keys : []).map((key) => asCleanString(record[key])).find(Boolean) ?? '';
+};
+const firstNumber = (item: Record<string, unknown>, keys: string[]) => {
+  const record = asRecord(item);
+  return (Array.isArray(keys) ? keys : []).map((key) => Number(record[key])).find((value) => Number.isFinite(value));
+};
 
 export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
   const product = criteria.productType || '';
@@ -271,20 +278,35 @@ export async function fetchApifyProspects(actorId: string, token: string, criter
     body: JSON.stringify({ shopifyActorId: cleanActorId, token: cleanToken || undefined, criteria: { ...criteria, platform: 'Shopify', location: criteria.location || 'France' }, maxItems }),
   });
   if (!proxyRes.ok) throw new Error(await readApifyError(proxyRes));
-  const result = await proxyRes.json() as ApifyImportResult;
+  const rawResult = await proxyRes.json().catch((error) => {
+    console.error('[fetchApifyProspects] Réponse Apify/proxy illisible', error);
+    return {};
+  }) as Partial<ApifyImportResult>;
+  console.log('[fetchApifyProspects] Réponse brute API Apify/proxy', rawResult);
+  const result: ApifyImportResult = {
+    prospects: Array.isArray(rawResult.prospects) ? rawResult.prospects : [],
+    rejectedProspects: Array.isArray(rawResult.rejectedProspects) ? rawResult.rejectedProspects : [],
+    report: rawResult.report,
+    rawItems: Array.isArray(rawResult.rawItems) ? rawResult.rawItems : [],
+    query: rawResult.query ?? '',
+    itemsCount: Number.isFinite(rawResult.itemsCount) ? Number(rawResult.itemsCount) : Array.isArray(rawResult.rawItems) ? rawResult.rawItems.length : 0,
+    insertedCount: rawResult.insertedCount,
+    duplicateCount: rawResult.duplicateCount,
+    progress: Array.isArray(rawResult.progress) ? rawResult.progress : [],
+  };
 
-  const progressMessages = result?.progress?.length ? result.progress : [
+  const progressMessages = result.progress?.length ? result.progress : [
     'Token detected',
     'Actor launched',
     'Dataset retrieved',
-    `${result?.itemsCount ?? result?.prospects.length ?? 0} results found`,
-    `${result?.insertedCount ?? result?.prospects.length ?? 0} prospects insérés exactement dans Supabase, ${result?.duplicateCount ?? 0} doublons ignorés`,
+    result.itemsCount ? `${result.itemsCount} prospects trouvés.` : 'Aucun prospect trouvé.',
+    `${result.insertedCount ?? result.prospects.length ?? 0} prospects insérés exactement dans Supabase, ${result.duplicateCount ?? 0} doublons ignorés`,
   ];
   progressMessages.forEach((message) => {
     const step: ApifyProgressStep = message.includes('Token') ? 'token-detected'
       : message.includes('Actor') ? 'actor-started'
       : message.includes('Dataset') ? 'dataset-retrieved'
-      : message.includes('results') ? 'results-found'
+      : /results|prospects trouvés|Aucun prospect trouvé/i.test(message) ? 'results-found'
       : 'prospects-inserted';
     onProgress?.({ step, message });
   });
