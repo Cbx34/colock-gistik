@@ -14,15 +14,19 @@ const SOURCE_REELLE_DEFAULT: Prospect['sourceReelle'] = 'Google Maps';
 let sourceReelleColumnAvailable = true;
 let shopifyVerifiedColumnAvailable = true;
 let facebookColumnAvailable = true;
+const prospectScoringColumns = ['whatsapp','product_count','is_mono_product','niche','has_contact_form','has_shipping_page','has_return_policy','professional_domain','instagram_active','facebook_active','tiktok_active','ships_to_france','recent_store','strong_ad_presence','marketplace','large_brand','inactive_store'] as const;
+let scoringColumnsAvailable = new Set<string>(prospectScoringColumns);
 
 const toDb = (p: Prospect, includeSourceReelle = sourceReelleColumnAvailable) => {
   const row: Record<string, unknown> = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, last_contact_at: p.lastContactAt, next_follow_up_at: p.nextFollowUpAt, campagne_id: p.campaignId, created_at: p.createdAt };
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || SOURCE_REELLE_DEFAULT;
   if (shopifyVerifiedColumnAvailable) row.shopify_verified = p.shopifyVerified ?? false;
   if (facebookColumnAvailable) row.facebook = p.facebook;
+  const scoringValues: Record<string, unknown> = { whatsapp: p.whatsapp, product_count: p.productCount, is_mono_product: p.isMonoProduct, niche: p.niche, has_contact_form: p.hasContactForm, has_shipping_page: p.hasShippingPage, has_return_policy: p.hasReturnPolicy, professional_domain: p.professionalDomain, instagram_active: p.instagramActive, facebook_active: p.facebookActive, tiktok_active: p.tiktokActive, ships_to_france: p.shipsToFrance, recent_store: p.recentStore, strong_ad_presence: p.strongAdPresence, marketplace: p.marketplace, large_brand: p.largeBrand, inactive_store: p.inactiveStore };
+  Object.entries(scoringValues).forEach(([key, value]) => { if (scoringColumnsAvailable.has(key)) row[key] = value; });
   return row;
 };
-const fromDb = (r: Record<string, unknown>) => normalizeProspect({ id: String(r.id), nomBoutique: String(r.nom_boutique), siteWeb: r.site_web as string, instagram: r.instagram as string, facebook: r.facebook as string, tiktok: r.tiktok as string, linkedin: r.linkedin as string, email: r.email as string, telephone: r.telephone as string, plateforme: r.plateforme as Prospect['plateforme'], typeProduits: r.type_produits as string, ville: r.ville as string, pays: r.pays as string, score: r.score as number, classement: r.classement as Prospect['classement'], statutContact: r.statut_contact as Prospect['statutContact'], volumeSignaux: (r.volume_signaux as string[]) ?? [], sourceUrl: r.source_url as string, source: r.source as Prospect['source'], sourceReelle: (r.source_reelle as Prospect['sourceReelle']) ?? SOURCE_REELLE_DEFAULT, shopifyVerified: r.shopify_verified === true, notes: r.notes as string, lastContactAt: r.last_contact_at as string, nextFollowUpAt: r.next_follow_up_at as string, campaignId: r.campagne_id as string, createdAt: r.created_at as string }, (r.source as Prospect['source']) ?? 'CSV');
+const fromDb = (r: Record<string, unknown>) => normalizeProspect({ id: String(r.id), nomBoutique: String(r.nom_boutique), siteWeb: r.site_web as string, instagram: r.instagram as string, facebook: r.facebook as string, tiktok: r.tiktok as string, linkedin: r.linkedin as string, whatsapp: r.whatsapp as string, email: r.email as string, telephone: r.telephone as string, plateforme: r.plateforme as Prospect['plateforme'], typeProduits: r.type_produits as string, ville: r.ville as string, pays: r.pays as string, score: r.score as number, classement: r.classement as Prospect['classement'], statutContact: r.statut_contact as Prospect['statutContact'], volumeSignaux: (r.volume_signaux as string[]) ?? [], sourceUrl: r.source_url as string, source: r.source as Prospect['source'], sourceReelle: (r.source_reelle as Prospect['sourceReelle']) ?? SOURCE_REELLE_DEFAULT, shopifyVerified: r.shopify_verified === true, productCount: r.product_count as number, isMonoProduct: r.is_mono_product as boolean, niche: r.niche as string, hasContactForm: r.has_contact_form as boolean, hasShippingPage: r.has_shipping_page as boolean, hasReturnPolicy: r.has_return_policy as boolean, professionalDomain: r.professional_domain as boolean, instagramActive: r.instagram_active as boolean, facebookActive: r.facebook_active as boolean, tiktokActive: r.tiktok_active as boolean, shipsToFrance: r.ships_to_france as boolean, recentStore: r.recent_store as boolean, strongAdPresence: r.strong_ad_presence as boolean, marketplace: r.marketplace as boolean, largeBrand: r.large_brand as boolean, inactiveStore: r.inactive_store as boolean, notes: r.notes as string, lastContactAt: r.last_contact_at as string, nextFollowUpAt: r.next_follow_up_at as string, campaignId: r.campagne_id as string, createdAt: r.created_at as string }, (r.source as Prospect['source']) ?? 'CSV');
 
 const normalizeSite = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '') : '';
 const normalizeEmail = (value: unknown) => typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -88,16 +92,25 @@ function isMissingSourceReelleColumn(error: unknown) {
   return maybe?.code === 'PGRST204' || /source_reelle|schema cache|Could not find .* column/i.test([maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' '));
 }
 
+function missingColumnName(error: unknown) {
+  const maybe = error as { message?: string; details?: string; hint?: string; code?: string };
+  const haystack = [maybe?.message, maybe?.details, maybe?.hint].filter(Boolean).join(' ');
+  return prospectScoringColumns.find((column) => haystack.includes(column)) ?? '';
+}
+
 async function refreshOptionalProspectColumnsState() {
-  const [sourceReelleProbe, shopifyVerifiedProbe, facebookProbe] = await Promise.all([
+  const [sourceReelleProbe, shopifyVerifiedProbe, facebookProbe, scoringProbe] = await Promise.all([
     supabase.from('prospects').select('source_reelle').limit(1),
     supabase.from('prospects').select('shopify_verified').limit(1),
     supabase.from('prospects').select('facebook').limit(1),
+    supabase.from('prospects').select(prospectScoringColumns.join(',')).limit(1),
   ]);
   sourceReelleColumnAvailable = !sourceReelleProbe.error || !isMissingSourceReelleColumn(sourceReelleProbe.error);
   shopifyVerifiedColumnAvailable = !shopifyVerifiedProbe.error || !isMissingShopifyVerifiedColumn(shopifyVerifiedProbe.error);
   facebookColumnAvailable = !facebookProbe.error || !isMissingFacebookColumn(facebookProbe.error);
+  if (scoringProbe.error) scoringColumnsAvailable = new Set();
 }
+
 
 function getProspectsOrderQuery() {
   const query = supabase.from('prospects').select('*');
@@ -202,6 +215,13 @@ export async function saveProspectsToSupabase(prospects: Prospect[]) {
   }
   if (error && isMissingFacebookColumn(error)) {
     facebookColumnAvailable = false;
+    rows = writableProspects.map((prospect) => toDb(prospect));
+    const retry = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
+    error = retry.error;
+  }
+  const missingScoringColumn = missingColumnName(error);
+  if (error && missingScoringColumn) {
+    scoringColumnsAvailable.delete(missingScoringColumn);
     rows = writableProspects.map((prospect) => toDb(prospect));
     const retry = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
     error = retry.error;
