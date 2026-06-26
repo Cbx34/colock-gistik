@@ -47,7 +47,7 @@ const nowIso = () => new Date().toISOString();
 const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '');
 const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
-const PROSPECT_SIGNAL_COLUMNS = ['whatsapp','product_count','is_mono_product','niche','has_contact_form','has_shipping_page','has_return_policy','professional_domain','instagram_active','facebook_active','tiktok_active','ships_to_france','recent_store','strong_ad_presence','marketplace','large_brand','inactive_store'];
+const PROSPECT_SIGNAL_COLUMNS = ['whatsapp','product_count','is_mono_product','niche','has_contact_form','has_shipping_page','has_return_policy','professional_domain','instagram_active','facebook_active','tiktok_active','ships_to_france','active_store','internal_logistics','recent_store','strong_ad_presence','marketplace','large_brand','inactive_store'];
 const PROSPECT_CHECK_CONSTRAINTS = {
   prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
   prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
@@ -177,7 +177,9 @@ function normalizeProspect(draft, source = 'Apify') {
     typeProduits: draft.typeProduits?.trim() || 'e-commerce',
     ville: draft.ville?.trim() || 'France',
     pays: draft.pays?.trim() || 'France',
-    ...scored,
+    score: scored.score,
+    classement: scored.classement,
+    scoreDetails: scored.details.map((item) => `${item.points > 0 ? '+' : ''}${item.points} ${item.label}`),
     ...detectProspectSignals(draft),
     statutContact: 'Nouveau',
     volumeSignaux: draft.volumeSignaux?.filter(Boolean) || [],
@@ -193,7 +195,7 @@ function normalizeProspect(draft, source = 'Apify') {
 function toDb(p, includeSourceReelle = true, includeShopifyVerified = true, includeFacebook = true, includeSignalColumns = PROSPECT_SIGNAL_COLUMNS) {
   const row = { id: p.id, nom_boutique: p.nomBoutique, site_web: p.siteWeb, instagram: p.instagram, tiktok: p.tiktok, linkedin: p.linkedin, email: p.email, telephone: p.telephone, plateforme: p.plateforme, type_produits: p.typeProduits, ville: p.ville, pays: p.pays, score: p.score, classement: p.classement, statut_contact: p.statutContact, volume_signaux: p.volumeSignaux, source_url: p.sourceUrl, source: p.source, notes: p.notes, created_at: p.createdAt };
   if (includeFacebook) row.facebook = p.facebook;
-  const signalValues = { whatsapp: p.whatsapp, product_count: p.productCount, is_mono_product: p.isMonoProduct, niche: p.niche, has_contact_form: p.hasContactForm, has_shipping_page: p.hasShippingPage, has_return_policy: p.hasReturnPolicy, professional_domain: p.professionalDomain, instagram_active: p.instagramActive, facebook_active: p.facebookActive, tiktok_active: p.tiktokActive, ships_to_france: p.shipsToFrance, recent_store: p.recentStore, strong_ad_presence: p.strongAdPresence, marketplace: p.marketplace, large_brand: p.largeBrand, inactive_store: p.inactiveStore };
+  const signalValues = { whatsapp: p.whatsapp, product_count: p.productCount, is_mono_product: p.isMonoProduct, niche: p.niche, has_contact_form: p.hasContactForm, has_shipping_page: p.hasShippingPage, has_return_policy: p.hasReturnPolicy, professional_domain: p.professionalDomain, instagram_active: p.instagramActive, facebook_active: p.facebookActive, tiktok_active: p.tiktokActive, ships_to_france: p.shipsToFrance, active_store: p.activeStore, internal_logistics: p.internalLogistics, recent_store: p.recentStore, strong_ad_presence: p.strongAdPresence, marketplace: p.marketplace, large_brand: p.largeBrand, inactive_store: p.inactiveStore };
   Object.entries(signalValues).forEach(([key, value]) => { if (includeSignalColumns.includes(key)) row[key] = value; });
   if (includeSourceReelle) row.source_reelle = p.sourceReelle || 'Google Maps';
   if (includeShopifyVerified) row.shopify_verified = p.shopifyVerified || false;
@@ -292,6 +294,19 @@ function absoluteUrl(base, path) {
     const root = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
     return new URL(path, root.origin).toString();
   } catch { return ''; }
+}
+
+
+function discoverQualificationLinks(html, siteWeb) {
+  const hrefs = Array.from(String(html || '').matchAll(/href=["']([^"']+)["']/gi)).map((match) => match[1]);
+  const wanted = /(contact|a-propos|about|livraison|shipping|expedition|mentions|legal|privacy|confidentialit|politique|conditions)/i;
+  return hrefs
+    .filter((href) => wanted.test(href) && !/^(mailto:|tel:|#|javascript:)/i.test(href))
+    .map((href) => {
+      try { return new URL(href, absoluteUrl(siteWeb, '/')).toString(); } catch { return ''; }
+    })
+    .filter(Boolean)
+    .slice(0, 20);
 }
 
 function cleanSocialUrl(url, host) {
@@ -473,6 +488,11 @@ async function enrichShopifyContactData(prospect) {
       visited.push(url);
       detectedPages.push(pageSignal(url));
       mergeCollected(collected, extractContactData(html));
+      if (/\/$/.test(new URL(url).pathname)) {
+        for (const discoveredUrl of discoverQualificationLinks(html, prospect.siteWeb)) {
+          if (!pages.includes(discoveredUrl)) pages.push(discoveredUrl);
+        }
+      }
       if (!collected.email && /sitemap/i.test(url)) {
         const legalUrls = Array.from(html.matchAll(/<loc>([^<]*(?:contact|mentions|legal|privacy|livraison|shipping)[^<]*)<\/loc>/gi)).slice(0, 8).map((m) => m[1]);
         for (const legalUrl of legalUrls) {
@@ -680,7 +700,7 @@ function dbToProspect(row) {
   return normalizeProspect({
     id: String(row.id), nomBoutique: String(row.nom_boutique || 'Prospect'), siteWeb: row.site_web, instagram: row.instagram, facebook: row.facebook, tiktok: row.tiktok, linkedin: row.linkedin, whatsapp: row.whatsapp, email: row.email, telephone: row.telephone,
     plateforme: row.plateforme || 'Shopify', typeProduits: row.type_produits, ville: row.ville, pays: row.pays, sourceUrl: row.source_url, sourceReelle: row.source_reelle || 'Shopify', source: row.source || 'Apify', shopifyVerified: row.shopify_verified === true,
-    productCount: row.product_count, isMonoProduct: row.is_mono_product, hasContactForm: row.has_contact_form, hasShippingPage: row.has_shipping_page, hasReturnPolicy: row.has_return_policy, shipsToFrance: row.ships_to_france,
+    productCount: row.product_count, isMonoProduct: row.is_mono_product, hasContactForm: row.has_contact_form, hasShippingPage: row.has_shipping_page, hasReturnPolicy: row.has_return_policy, shipsToFrance: row.ships_to_france, activeStore: row.active_store, internalLogistics: row.internal_logistics,
     volumeSignaux: row.volume_signaux || [], notes: row.notes, createdAt: row.created_at,
   }, row.source || 'Apify');
 }
