@@ -33,7 +33,9 @@ export type Prospect = {
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
-export type ApifyImportResult = { prospects: Prospect[]; rawItems?: Record<string, unknown>[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
+export type RejectedProspect = { id: string; nomBoutique: string; siteWeb?: string; score: number; reason: string; raw?: Record<string, unknown> };
+export type ImportReport = { rawCount: number; normalizedCount: number; insertedCount: number; duplicateCount: number; rejectedCount: number; rejectionReasons: Record<string, number>; supabaseErrors?: string[] };
+export type ApifyImportResult = { prospects: Prospect[]; rejectedProspects?: RejectedProspect[]; report?: ImportReport; rawItems?: Record<string, unknown>[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
 export type AutoProspectingQuota = 100 | 500 | 1000 | 'illimité';
 export type AutoSearchHistoryEntry = { id: string; country: string; niche: string; keyword: string; query: string; searchedAt: string; insertedCount: number; duplicateCount: number; qualifiedCount: number };
 export type ProspectChannelMessages = { email: string; linkedin: string; instagram: string; sms: string; followUpJ3: string; followUpJ7: string };
@@ -45,9 +47,11 @@ export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: 
 const DEFAULT_APIFY_MAX_ITEMS = 25;
 export const DEFAULT_APIFY_GOOGLE_MAPS_ACTOR_ID = 'clearpath/shopify-store-leads';
 export const DEFAULT_APIFY_SHOPIFY_ACTOR_ID = 'clearpath/shopify-store-leads';
-export const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES.map((item) => item.query);
+export const COLOCK_PRIORITY_KEYWORDS = ['mono-produit','dropshipping France','bijoux','cosmétique','vêtements femme','vêtements homme','accessoires','maroquinerie','bébé','jouets','décoration','bougies','animalerie','sport','nutrition sportive','cartes Pokémon','figurines','cadeaux personnalisés','produits personnalisés'];
+export const PRIORITY_SHOPIFY_QUERIES = Array.from(new Set([...COLOCK_PRIORITY_KEYWORDS.map((keyword) => `${keyword} France`), ...ECOMMERCE_KEYWORD_QUERIES.map((item) => item.query)]));
 export function qualifiedTargetPerKeyword(keywordCount: number, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) { return Math.max(1, Math.ceil(target / Math.max(1, keywordCount))); }
-export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return Boolean(prospect.shopifyVerified && prospect.email && (prospect.instagram || prospect.facebook)); }
+export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return Boolean(prospect.shopifyVerified && (prospect.email || prospect.telephone || prospect.instagram || prospect.facebook) && (prospect.score ?? 0) > 65); }
+export function isPriorityProspect(prospect: Partial<Prospect>) { return isQualifiedShopifyProspect(prospect) && /France|Belgique|Suisse|Luxembourg|francophone/i.test(`${prospect.pays ?? ''} ${prospect.ville ?? ''} ${prospect.volumeSignaux?.join(' ') ?? ''}`); }
 
 const nowIso = () => new Date().toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOString();
@@ -98,23 +102,26 @@ export function detectProspectSignals(input: Partial<Prospect> & { volumeSignaux
 export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
   const d = detectProspectSignals(input);
   let score = 0;
-  if (d.isMonoProduct) score += 30;
+  if (input.shopifyVerified) score += 20;
   if (input.email) score += 20;
-  if (input.telephone) score += 15;
+  if (input.telephone) score += 10;
   if (d.countryFrance) score += 15;
   if (d.instagramActive) score += 10;
   if (d.facebookActive) score += 10;
-  if (d.tiktokActive) score += 15;
-  if (input.shopifyVerified) score += 10;
-  if (d.recentStore) score += 10;
-  if (d.shipsToFrance) score += 15;
-  if (d.strongAdPresence) score += 10;
-  if (d.productCount && d.productCount > 100) score -= 30;
-  if (d.marketplace) score -= 20;
-  if (d.largeBrand) score -= 20;
-  if (d.inactiveStore) score -= 15;
+  if (d.tiktokActive) score += 10;
+  if (d.isMonoProduct || (d.productCount && d.productCount <= 10)) score += 15;
+  if (d.productCount && d.productCount < 50) score += 10;
+  if (d.hasShippingPage) score += 10;
+  if (!d.inactiveStore) score += 10;
+  if (d.hasContactForm) score += 10;
+  if (d.marketplace) score -= 30;
+  if (d.largeBrand) score -= 30;
+  if (d.productCount && d.productCount > 100) score -= 20;
+  if (d.inactiveStore) score -= 20;
+  if (!input.email && !input.telephone && !input.instagram && !input.facebook && !input.tiktok && !d.hasContactForm) score -= 15;
+  if (!d.countryFrance && /hors Europe francophone|outside french europe/i.test(`${input.notes ?? ''} ${input.volumeSignaux?.join(' ') ?? ''}`)) score -= 15;
   score = Math.max(0, Math.min(100, score));
-  return { score, classement: score >= 90 ? 'ultra-chaud' : score >= 75 ? 'chaud' : score >= 50 ? 'moyen' : 'faible' };
+  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible' };
 }
 
 export function resolveRealSource(platform: SearchCriteria['platform'] | Platform | ImportSource): RealSource {
@@ -168,7 +175,7 @@ export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFA
   const customQuery = [criteria.keywords, product, location].filter(Boolean).join(' ').trim();
   const queries = Array.from(new Set([customQuery, ...PRIORITY_SHOPIFY_QUERIES].filter(Boolean)));
   const query = queries[0];
-  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: location, location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: true, requireSocial: true, requireProducts: true, qualificationRules: ['shopify_verified','email_found','instagram_or_facebook','france_priority'] };
+  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: location, location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: false, requireSocial: false, requireProducts: false, qualificationRules: ['shopify_verified_preferred','keep_without_email','keep_without_phone','keep_without_social','colock_score_100'] };
 }
 
 export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {

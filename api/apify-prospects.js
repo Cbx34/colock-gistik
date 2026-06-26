@@ -24,7 +24,7 @@ const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ keywords 
 const PRIORITY_SHOPIFY_QUERIES = ECOMMERCE_KEYWORD_QUERIES;
 const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY) => Math.max(1, Math.ceil(target / Math.max(1, keywordCount)));
 const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
-const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && asString(prospect.email) && hasRequiredSocial(prospect));
+const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && (asString(prospect.email) || asString(prospect.telephone) || asString(prospect.instagram) || asString(prospect.facebook)) && (prospect.score || 0) > 65);
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
 const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service', '/policies/shipping-policy', '/policies/refund-policy', '/pages/livraison', '/pages/expedition', '/pages/retours'];
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
@@ -151,23 +151,26 @@ function detectProspectSignals(input) {
 function scoreProspect(input) {
   const d = detectProspectSignals(input);
   let score = 0;
-  if (d.isMonoProduct) score += 30;
+  if (input.shopifyVerified) score += 20;
   if (input.email) score += 20;
-  if (input.telephone) score += 15;
+  if (input.telephone) score += 10;
   if (d.countryFrance) score += 15;
   if (d.instagramActive) score += 10;
   if (d.facebookActive) score += 10;
-  if (d.tiktokActive) score += 15;
-  if (input.shopifyVerified) score += 10;
-  if (d.recentStore) score += 10;
-  if (d.shipsToFrance) score += 15;
-  if (d.strongAdPresence) score += 10;
-  if (d.productCount && d.productCount > 100) score -= 30;
-  if (d.marketplace) score -= 20;
-  if (d.largeBrand) score -= 20;
-  if (d.inactiveStore) score -= 15;
+  if (d.tiktokActive) score += 10;
+  if (d.isMonoProduct || (d.productCount && d.productCount <= 10)) score += 15;
+  if (d.productCount && d.productCount < 50) score += 10;
+  if (d.hasShippingPage) score += 10;
+  if (!d.inactiveStore) score += 10;
+  if (d.hasContactForm) score += 10;
+  if (d.marketplace) score -= 30;
+  if (d.largeBrand) score -= 30;
+  if (d.productCount && d.productCount > 100) score -= 20;
+  if (d.inactiveStore) score -= 20;
+  if (!input.email && !input.telephone && !input.instagram && !input.facebook && !input.tiktok && !d.hasContactForm) score -= 15;
+  if (!d.countryFrance && /hors Europe francophone|outside french europe/i.test(`${input.notes || ''} ${input.volumeSignaux?.join(' ') || ''}`)) score -= 15;
   score = Math.max(0, Math.min(100, score));
-  return { score, classement: score >= 90 ? 'ultra-chaud' : score >= 75 ? 'chaud' : score >= 50 ? 'moyen' : 'faible' };
+  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible' };
 }
 
 function normalizeProspect(draft, source = 'Apify') {
@@ -270,10 +273,10 @@ function buildApifyShopifyInput(criteria, maxItems = DEFAULT_MAX_ITEMS) {
     onlyShopify: true,
     includeEmails: true,
     includePhones: true,
-    requireEmail: true,
-    requireSocial: true,
-    requireProducts: true,
-    qualificationRules: ['shopify_verified', 'email_found', 'instagram_or_facebook', 'france_priority'],
+    requireEmail: false,
+    requireSocial: false,
+    requireProducts: false,
+    qualificationRules: ['shopify_verified_preferred', 'keep_without_email', 'keep_without_phone', 'keep_without_social', 'colock_score_100'],
   };
 }
 
@@ -313,16 +316,22 @@ function cleanSocialUrl(url, host) {
   } catch { return ''; }
 }
 async function detectShopifyProductCount(siteWeb) {
-  const url = absoluteUrl(siteWeb, '/products.json?limit=250');
-  if (!url) return undefined;
-  try {
-    const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify product counter' } });
-    if (!response.ok) return undefined;
-    const json = await response.json();
-    return Array.isArray(json?.products) ? json.products.length : undefined;
-  } catch {
-    return undefined;
+  const urls = ['/products.json?limit=250', '/collections/all/products.json?limit=250', '/sitemap_products_1.xml'].map((path) => absoluteUrl(siteWeb, path)).filter(Boolean);
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify product counter' } });
+      if (!response.ok) continue;
+      const text = await response.text();
+      if (/\.xml($|\?)/i.test(url)) {
+        const count = (text.match(/<loc>/g) || []).length;
+        if (count) return count;
+      } else {
+        const json = JSON.parse(text);
+        if (Array.isArray(json?.products)) return json.products.length;
+      }
+    } catch {}
   }
+  return undefined;
 }
 
 function extractContactData(html) {
@@ -456,17 +465,42 @@ function isExcludedShopifyLead(prospect) {
   return EXCLUDED_SHOPIFY_LEAD_MARKERS.some((marker) => marker.test(haystack));
 }
 
+
+function rejectReason(prospect) {
+  const haystack = `${prospect.nomBoutique || ''} ${prospect.siteWeb || ''} ${prospect.typeProduits || ''} ${prospect.notes || ''} ${prospect.volumeSignaux?.join(' ') || ''}`;
+  if (!asString(prospect.siteWeb)) return 'pas de site';
+  try { new URL(/^https?:\/\//i.test(prospect.siteWeb) ? prospect.siteWeb : `https://${prospect.siteWeb}`); } catch { return 'domaine invalide'; }
+  if (hasExcludedCountryMarker(haystack)) return 'hors France';
+  if (prospect.marketplace) return 'marketplace';
+  if (prospect.largeBrand || isExcludedShopifyLead(prospect)) return /carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea/i.test(haystack) ? 'grande enseigne' : 'marketplace';
+  if (!prospect.shopifyVerified) return 'pas Shopify vérifié';
+  if ((prospect.score || 0) < 15) return 'score trop faible';
+  return '';
+}
+
+function buildReport(rawCount, normalized, inserted, duplicates, rejected, supabaseErrors = []) {
+  return {
+    rawCount,
+    normalizedCount: normalized.length,
+    insertedCount: inserted,
+    duplicateCount: duplicates,
+    rejectedCount: rejected.length,
+    rejectionReasons: rejected.reduce((acc, item) => ({ ...acc, [item.reason]: (acc[item.reason] || 0) + 1 }), {}),
+    supabaseErrors,
+  };
+}
+
 async function insertProspects(prospects) {
   const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
   const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
-  if (!url || !key) throw new Error('Variables Supabase serveur manquantes (SUPABASE_URL/VITE_SUPABASE_URL et SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY/VITE_SUPABASE_ANON_KEY)');
+  if (!url || !key) return { added: 0, ignored: 0, errors: ['Variables Supabase serveur manquantes (prospection conservée côté navigateur)'] };
   if (!prospects.length) return { added: 0, ignored: 0 };
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   const optionalColumns = await detectOptionalProspectColumns(supabase);
   const { data: existing, error: selectError } = await supabase.from('prospects').select('id,email,site_web');
   if (selectError) {
     logError('[apify-prospects] Supabase prospect lookup failed', selectError, { code: selectError.code, details: selectError.details, hint: selectError.hint });
-    throw new Error(`Erreur Supabase lookup prospects — ${formatSupabaseError(selectError)}`);
+    return { added: 0, ignored: 0, errors: [`Erreur Supabase lookup prospects — ${formatSupabaseError(selectError)}`] };
   }
 
   const existingIds = new Set((existing || []).map((row) => row.id).filter(Boolean));
@@ -522,7 +556,7 @@ async function insertProspects(prospects) {
   if (!isDuplicateError(error) && !isCheckViolation(error)) {
     const detail = formatSupabaseError(error, { rows: rows.length });
     logError('[apify-prospects] Supabase bulk insert failed', error, { code: error.code, details: error.details, hint: error.hint, rows: rows.length });
-    throw new Error(`Erreur Supabase insertion groupée — ${detail}`);
+    return { added: 0, ignored, errors: [`Erreur Supabase insertion groupée — ${detail}`] };
   }
 
   let added = 0;
@@ -538,7 +572,7 @@ async function insertProspects(prospects) {
     else {
       const detail = formatSupabaseError(rowError, { prospectId: row.id, nomBoutique: row.nom_boutique, siteWeb: row.site_web });
       logError('[apify-prospects] Supabase single-row insert failed', rowError, { code: rowError.code, details: rowError.details, hint: rowError.hint, prospectId: row.id, row });
-      throw new Error(`Erreur Supabase insertion ligne — ${detail}`);
+      return { added, ignored, errors: [`Erreur Supabase insertion ligne — ${detail}`] };
     }
   }
   return { added, ignored };
@@ -581,7 +615,9 @@ async function handler(req, res) {
     let prospects = await Promise.all(safeItems.map(async (item) => enrichShopifyContactData(apifyShopifyItemToProspect(item, { ...criteria, platform: 'Shopify' }))));
     const verified = await Promise.all(prospects.map(async (prospect) => {
       const check = await verifyShopifySite(prospect.siteWeb);
-      return { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
+      const verifiedProspect = { ...prospect, plateforme: 'Shopify', sourceReelle: check.verified ? 'Shopify' : 'Inconnue', shopifyVerified: check.verified, volumeSignaux: [...prospect.volumeSignaux, check.verified ? 'Shopify vérifié automatiquement (cdn.shopify.com/myshopify.com)' : `Non Shopify: ${check.reason}`] };
+      const rescored = normalizeProspect(verifiedProspect, verifiedProspect.source);
+      return { ...verifiedProspect, score: rescored.score, classement: rescored.classement, ...detectProspectSignals(verifiedProspect) };
     }));
     prospects = verified.map((prospect) => ({
       ...prospect,
@@ -595,13 +631,22 @@ async function handler(req, res) {
       ].filter(Boolean),
     }));
     prospects = filterFranceProspects(prospects, criteria);
-    progress.push(`${prospects.length} prospects Shopify normalisés après filtre France`);
-    prospects = prospects.filter(isQualifiedShopifyProspect);
-    progress.push(`${prospects.length} prospects qualifiés conservés (Shopify vérifié + email + Instagram/Facebook, France prioritaire)`);
-    const insertResult = await insertProspects(prospects);
+    progress.push(`${prospects.length} prospects Shopify normalisés et scorés`);
+    const rejectedProspects = [];
+    const exploitable = [];
+    prospects.forEach((prospect, index) => {
+      const reason = rejectReason(prospect);
+      const rejected = reason && !((reason === 'pas Shopify vérifié' || reason === 'score trop faible') && prospect.siteWeb && prospect.score >= 15 && !prospect.marketplace && !prospect.largeBrand);
+      if (rejected) rejectedProspects.push({ id: prospect.id, nomBoutique: prospect.nomBoutique, siteWeb: prospect.siteWeb, score: prospect.score, reason, raw: safeItems[index] });
+      else exploitable.push(prospect);
+    });
+    progress.push(`${exploitable.length} prospects exploitables conservés, ${rejectedProspects.length} rejetés avec raison exacte`);
+    const insertResult = await insertProspects(exploitable);
     progress.push(`${insertResult.added} prospects insérés exactement dans Supabase, ${insertResult.ignored} doublons ignorés`);
+    (insertResult.errors || []).forEach((message) => progress.push(`Erreur Supabase non bloquante : ${message}`));
+    const report = buildReport(safeItems.length, prospects, insertResult.added, insertResult.ignored, rejectedProspects, insertResult.errors || []);
 
-    return res.status(200).json({ prospects, rawItems: safeItems, query: input.searchStringsArray?.[0] || input.query, itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
+    return res.status(200).json({ prospects: exploitable, rejectedProspects, report, rawItems: safeItems, query: input.searchStringsArray?.[0] || input.query, itemsCount: safeItems.length, insertedCount: insertResult.added, duplicateCount: insertResult.ignored, actorId, progress });
   } catch (error) {
     logError('[apify-prospects] Route failed', error, { actorId, progress });
     return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur inconnue Apify', details: describeError(error), actorId, progress });

@@ -198,7 +198,6 @@ export async function saveProspectsToSupabase(prospects: Prospect[]) {
     if (site) rowBySite.set(site, String(row.id));
   }
   const writableProspects = prospects.filter((prospect) => {
-    if ((prospect.plateforme === 'Shopify' || prospect.sourceReelle === 'Shopify') && !prospect.shopifyVerified) return false;
     const emailOwner = rowByEmail.get(normalizeEmail(prospect.email));
     const siteOwner = rowBySite.get(normalizeSite(prospect.siteWeb));
     return (!emailOwner || emailOwner === prospect.id) && (!siteOwner || siteOwner === prospect.id);
