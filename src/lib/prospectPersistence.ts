@@ -33,8 +33,8 @@ const isDuplicateError = (error: unknown) => {
 
 type ProspectCheckConstraint = { column: string; allowed: string };
 const PROSPECT_CHECK_CONSTRAINTS: Record<string, ProspectCheckConstraint> = {
-  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 20' },
-  prospects_classement_check: { column: 'classement', allowed: 'chaud, moyen, faible' },
+  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
+  prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
   prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
   prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
   prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },

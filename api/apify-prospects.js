@@ -26,7 +26,7 @@ const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TA
 const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
 const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && asString(prospect.email) && hasRequiredSocial(prospect));
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
-const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service'];
+const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service', '/policies/shipping-policy', '/policies/refund-policy', '/pages/livraison', '/pages/expedition', '/pages/retours'];
 const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
 const PHONE_REGEX = /(?:\+33|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
 const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com' };
@@ -45,8 +45,8 @@ const normalizeSite = (value) => asString(value).toLowerCase().replace(/^https?:
 const normalizeEmail = (value) => asString(value).toLowerCase();
 const isDuplicateError = (error) => error?.code === '23505' || /duplicate key value violates unique constraint/i.test(error?.message || '');
 const PROSPECT_CHECK_CONSTRAINTS = {
-  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 20' },
-  prospects_classement_check: { column: 'classement', allowed: 'chaud, moyen, faible' },
+  prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
+  prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
   prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
   prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
   prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },
@@ -120,18 +120,53 @@ async function readApiError(response) {
   }
 }
 
-function scoreProspect(input) {
+function detectProspectSignals(input) {
   const signals = input.volumeSignaux || [];
-  const haystack = `${input.pays || ''} ${input.ville || ''} ${signals.join(' ')} ${input.notes || ''}`;
+  const haystack = `${input.nomBoutique || ''} ${input.siteWeb || ''} ${input.pays || ''} ${input.ville || ''} ${input.typeProduits || ''} ${signals.join(' ')} ${input.notes || ''}`;
+  const productCount = input.productCount || (Number(((haystack.match(/(?:produits?|products?)\s*(?:détectés?|count)?\s*[:=]?\s*(\d+)/i) || [])[1]) || NaN) || undefined);
+  const isMonoProduct = input.isMonoProduct ?? (Boolean(productCount && productCount >= 1 && productCount <= 10) || /mono[- ]?produit|single[- ]?product|1 à 10 produits/i.test(haystack));
+  return {
+    productCount,
+    isMonoProduct,
+    niche: input.niche || input.typeProduits || 'e-commerce',
+    countryFrance: /France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b|\bFR\b/i.test(haystack),
+    instagramActive: input.instagramActive ?? Boolean(input.instagram && !/instagram inactive|instagram absent/i.test(haystack)),
+    facebookActive: input.facebookActive ?? Boolean(input.facebook && !/facebook inactive|facebook absent/i.test(haystack)),
+    tiktokActive: input.tiktokActive ?? Boolean(input.tiktok && !/tiktok inactive|tiktok absent/i.test(haystack)),
+    whatsapp: input.whatsapp || (/whatsapp/i.test(haystack) ? 'WhatsApp détecté' : undefined),
+    hasContactForm: input.hasContactForm ?? /formulaire de contact|contact form|page contact/i.test(haystack),
+    hasShippingPage: input.hasShippingPage ?? /page expédition|livraison|shipping|delivery/i.test(haystack),
+    hasReturnPolicy: input.hasReturnPolicy ?? /politique de retour|retours?|returns?|refund/i.test(haystack),
+    professionalDomain: input.professionalDomain ?? Boolean(input.siteWeb && !/(myshopify\.com|wixsite|wordpress\.com|blogspot|example\.)/i.test(input.siteWeb)),
+    shipsToFrance: input.shipsToFrance ?? /expédition France|livraison France|ships to France|shipping to France/i.test(haystack),
+    recentStore: input.recentStore ?? /boutique récente|new store|nouvelle boutique|lancée? en 202[4-6]/i.test(haystack),
+    strongAdPresence: input.strongAdPresence ?? /Meta Ads|Facebook Ads|TikTok Ads|ads library|publicit[ée] active|forte présence publicitaire/i.test(haystack),
+    marketplace: input.marketplace ?? /marketplace|amazon|cdiscount|fnac|rakuten|etsy marketplace|ebay/i.test(haystack),
+    largeBrand: input.largeBrand ?? /grande enseigne|carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea/i.test(haystack),
+    inactiveStore: input.inactiveStore ?? /boutique inactive|site inactif|inactive|dernière publication ancienne|rupture générale/i.test(haystack),
+  };
+}
+
+function scoreProspect(input) {
+  const d = detectProspectSignals(input);
   let score = 0;
-  if (input.email) score += 5;
-  if (input.telephone) score += 2;
-  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 4;
-  if (input.shopifyVerified) score += 4;
-  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 2;
-  if (input.instagram || input.facebook) score += 3;
-  score = Math.min(20, score);
-  return { score, classement: score >= 16 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
+  if (d.isMonoProduct) score += 30;
+  if (input.email) score += 20;
+  if (input.telephone) score += 15;
+  if (d.countryFrance) score += 15;
+  if (d.instagramActive) score += 10;
+  if (d.facebookActive) score += 10;
+  if (d.tiktokActive) score += 15;
+  if (input.shopifyVerified) score += 10;
+  if (d.recentStore) score += 10;
+  if (d.shipsToFrance) score += 15;
+  if (d.strongAdPresence) score += 10;
+  if (d.productCount && d.productCount > 100) score -= 30;
+  if (d.marketplace) score -= 20;
+  if (d.largeBrand) score -= 20;
+  if (d.inactiveStore) score -= 15;
+  score = Math.max(0, Math.min(100, score));
+  return { score, classement: score >= 90 ? 'ultra-chaud' : score >= 75 ? 'chaud' : score >= 50 ? 'moyen' : 'faible' };
 }
 
 function normalizeProspect(draft, source = 'Apify') {
@@ -147,11 +182,13 @@ function normalizeProspect(draft, source = 'Apify') {
     facebook: draft.facebook?.trim() || undefined,
     email: draft.email?.trim() || undefined,
     telephone: draft.telephone?.trim() || undefined,
+    whatsapp: draft.whatsapp?.trim() || undefined,
     plateforme: draft.plateforme || 'Inconnue',
     typeProduits: draft.typeProduits?.trim() || 'e-commerce',
     ville: draft.ville?.trim() || 'France',
     pays: draft.pays?.trim() || 'France',
     ...scored,
+    ...detectProspectSignals(draft),
     statutContact: 'Nouveau',
     volumeSignaux: draft.volumeSignaux?.filter(Boolean) || [],
     sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '',
@@ -269,6 +306,18 @@ function cleanSocialUrl(url, host) {
     return `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '');
   } catch { return ''; }
 }
+async function detectShopifyProductCount(siteWeb) {
+  const url = absoluteUrl(siteWeb, '/products.json?limit=250');
+  if (!url) return undefined;
+  try {
+    const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify product counter' } });
+    if (!response.ok) return undefined;
+    const json = await response.json();
+    return Array.isArray(json?.products) ? json.products.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function extractContactData(html) {
   const text = String(html || '').replace(/&amp;/g, '&');
@@ -328,21 +377,25 @@ function filterFranceProspects(prospects, criteria) {
 }
 
 async function enrichShopifyContactData(prospect) {
-  if (!prospect.siteWeb || prospect.email) return prospect;
+  if (!prospect.siteWeb) return prospect;
   const pages = CONTACT_PATHS.map((path) => absoluteUrl(prospect.siteWeb, path)).filter(Boolean);
   const collected = {};
   const visited = [];
+  const detectedPages = [];
   for (const url of pages) {
     try {
       const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify contact enricher' } });
       if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') || 'text/html')) continue;
       visited.push(url);
+      if (/shipping|livraison|expedition/i.test(url)) detectedPages.push('page expédition détectée');
+      if (/refund|retours?/i.test(url)) detectedPages.push('politique de retour détectée');
       Object.assign(collected, Object.fromEntries(Object.entries(extractContactData(await response.text())).filter(([, value]) => value)));
       if (collected.email && collected.telephone && collected.instagram && collected.facebook && collected.tiktok && collected.linkedin) break;
     } catch {}
   }
   const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => key !== 'frenchLegalNotice' && value && !prospect[key]));
-  const enriched = normalizeProspect({ ...prospect, ...contactFields, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
+  const productCount = prospect.productCount || await detectShopifyProductCount(prospect.siteWeb);
+  const enriched = normalizeProspect({ ...prospect, ...contactFields, productCount, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', productCount ? `produits détectés: ${productCount}` : '', ...detectedPages, collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
   return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle };
 }
 
@@ -360,9 +413,10 @@ function apifyShopifyItemToProspect(item, criteria) {
   const contactUrl = firstString(item, ['contactUrl', 'contactPage', 'contactPageUrl', 'contact']);
   const city = firstString(item, ['city', 'location', 'municipality', 'addressCity']) || criteria.location || 'France';
   const products = firstString(item, ['products', 'productSamples', 'productTitles', 'productExamples', 'topProducts']);
+  const productCount = firstNumber(item, ['productCount', 'productsCount', 'numberOfProducts']);
   const category = firstString(item, ['category', 'categoryName', 'industry', 'productType', 'niche']) || products || criteria.productType || 'e-commerce';
   const sourceUrl = firstString(item, ['sourceUrl', 'url', 'website', 'storeUrl', 'shopUrl']) || website;
-  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, instagram, facebook, tiktok, linkedin, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: country || 'France', sourceUrl, shopifyVerified: false, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', address ? `adresse: ${address}` : '', country ? `pays déclaré: ${country}` : '', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', address ? `Adresse: ${address}` : '', country ? `Pays déclaré: ${country}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
+  return normalizeProspect({ nomBoutique: name || website || 'Boutique Shopify', siteWeb: website, email, telephone: phone, instagram, facebook, tiktok, linkedin, plateforme: 'Shopify', sourceReelle: 'Shopify', typeProduits: category, ville: city, pays: country || 'France', sourceUrl, shopifyVerified: false, productCount, volumeSignaux: ['actor Apify clearpath/shopify-store-leads', address ? `adresse: ${address}` : '', country ? `pays déclaré: ${country}` : '', products ? `produits détectés: ${products}` : '', contactUrl ? `page contact: ${contactUrl}` : '', email ? 'email public détecté' : ''].filter(Boolean), notes: [`Importé via Apify clearpath/shopify-store-leads`, sourceUrl ? `Source: ${sourceUrl}` : '', address ? `Adresse: ${address}` : '', country ? `Pays déclaré: ${country}` : '', contactUrl ? `Contact: ${contactUrl}` : ''].filter(Boolean).join('\n') }, 'Apify');
 }
 
 function apifyItemToProspect(item, criteria) {
