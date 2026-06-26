@@ -150,20 +150,22 @@ export function normalizeProspect(draft: ProspectImportDraft, source: ImportSour
   return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', score: scored.score, classement: scored.classement, scoreDetails: scored.details, ...detectProspectSignals(draft), statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
 }
 
-export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
-  const byKey = new Map(existing.map((p) => [dedupeKey(p), p]));
+export function mergeProspects(existing: Prospect[] = [], incoming: Prospect[] = []) {
+  const safeExisting = Array.isArray(existing) ? existing.filter(Boolean) : [];
+  const safeIncoming = Array.isArray(incoming) ? incoming.filter(Boolean) : [];
+  const byKey = new Map(safeExisting.map((p) => [dedupeKey(p), p]));
   let added = 0, merged = 0;
-  for (const prospect of incoming) {
+  for (const prospect of safeIncoming) {
     const key = dedupeKey(prospect);
     const current = byKey.get(key);
-    if (current) { byKey.set(key, { ...current, ...prospect, id: current.id, volumeSignaux: Array.from(new Set([...current.volumeSignaux, ...prospect.volumeSignaux])), notes: [current.notes, prospect.notes].filter(Boolean).join('\n') }); merged += 1; }
+    if (current) { byKey.set(key, { ...current, ...prospect, id: current.id, volumeSignaux: Array.from(new Set([...(current.volumeSignaux ?? []), ...(prospect.volumeSignaux ?? [])])), notes: [current.notes, prospect.notes].filter(Boolean).join('\n') }); merged += 1; }
     else { byKey.set(key, prospect); added += 1; }
   }
   return { prospects: sortProspects(Array.from(byKey.values())), added, merged };
 }
 
-export function sortProspects(prospects: Prospect[]) {
-  return [...prospects].sort((a, b) => b.score - a.score || Number(b.shopifyVerified) - Number(a.shopifyVerified) || Number(Boolean(b.email)) - Number(Boolean(a.email)));
+export function sortProspects(prospects: Prospect[] = []) {
+  return [...(Array.isArray(prospects) ? prospects : [])].sort((a, b) => b.score - a.score || Number(b.shopifyVerified) - Number(a.shopifyVerified) || Number(Boolean(b.email)) - Number(Boolean(a.email)));
 }
 
 export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
