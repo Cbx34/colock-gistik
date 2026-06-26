@@ -28,10 +28,10 @@ const qualifiedTargetPerKeyword = (keywordCount, target = QUALIFIED_PROSPECTS_TA
 const hasRequiredSocial = (prospect) => Boolean(asString(prospect.instagram) || asString(prospect.facebook));
 const isQualifiedShopifyProspect = (prospect) => Boolean(prospect.shopifyVerified && (asString(prospect.email) || asString(prospect.telephone) || asString(prospect.instagram) || asString(prospect.facebook)) && (prospect.score || 0) > 65);
 const SHOPIFY_MARKERS = [/cdn\.shopify\.com/i, /myshopify\.com/i];
-const CONTACT_PATHS = ['/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service', '/policies/shipping-policy', '/policies/refund-policy', '/pages/livraison', '/pages/expedition', '/pages/retours'];
-const EMAIL_REGEX = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
-const PHONE_REGEX = /(?:\+33|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
-const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com' };
+const CONTACT_PATHS = ['/', '/contact', '/pages/contact', '/pages/contact-us', '/a-propos', '/pages/a-propos', '/about', '/pages/about-us', '/livraison', '/pages/livraison', '/pages/expedition', '/shipping', '/policies/shipping-policy', '/mentions-legales', '/pages/mentions-legales', '/legal-notice', '/conditions-generales', '/pages/conditions-generales', '/policies/terms-of-service', '/policies/privacy-policy', '/policies/refund-policy', '/pages/retours', '/sitemap.xml'];
+const EMAIL_REGEX = /[A-Z0-9._%+-]+(?:\s*(?:\[at\]|\(at\)|@)\s*)[A-Z0-9.-]+(?:\s*(?:\[dot\]|\(dot\)|\.)\s*)[A-Z]{2,}/gi;
+const PHONE_REGEX = /(?:(?:\+33|0033)\s*(?:\(0\)\s*)?|0)\s*[1-9](?:[\s.()-]*\d{2}){4}/g;
+const SOCIAL_HOSTS = { instagram: 'instagram.com', facebook: 'facebook.com', tiktok: 'tiktok.com', linkedin: 'linkedin.com', whatsapp: 'wa.me' };
 const EXCLUDED_PLATFORM_MARKERS = [/wp-content\//i, /woocommerce/i, /prestashop/i, /prestashop-/i, /wixstatic\.com/i, /x-wix-/i, /static\.parastorage\.com/i];
 const EXCLUDED_SHOPIFY_LEAD_MARKERS = [/carrefour/i, /grande enseigne/i, /hypermarch[ée]/i, /supermarch[ée]/i, /garde[- ]?meubles?/i, /self[- ]?stockage/i, /d[ée]m[ée]nage/i, /moving company/i, /magasin physique/i, /click and collect uniquement/i];
 const FRANCOPHONE_COUNTRY_MARKERS = [/\bfrance\b|\bfr\b/i, /\bbelgique\b|\bbelgium\b|\bbe\b/i, /\bsuisse\b|\bswitzerland\b|\bch\b/i, /\bluxembourg\b|\blu\b/i];
@@ -152,29 +152,10 @@ function detectProspectSignals(input) {
 }
 
 function scoreProspect(input) {
-  const d = detectProspectSignals(input);
-  let score = 0;
-  if (input.shopifyVerified) score += 20;
-  if (input.email) score += 20;
-  if (input.telephone) score += 10;
-  if (d.countryFrance) score += 15;
-  if (d.instagramActive) score += 10;
-  if (d.facebookActive) score += 10;
-  if (d.tiktokActive) score += 10;
-  if (d.isMonoProduct || (d.productCount && d.productCount <= 10)) score += 15;
-  if (d.productCount && d.productCount < 50) score += 10;
-  if (d.hasShippingPage) score += 10;
-  if (!d.inactiveStore) score += 10;
-  if (d.hasContactForm) score += 10;
-  if (d.marketplace) score -= 30;
-  if (d.largeBrand) score -= 30;
-  if (d.productCount && d.productCount > 100) score -= 20;
-  if (d.inactiveStore) score -= 20;
-  if (!input.email && !input.telephone && !input.instagram && !input.facebook && !input.tiktok && !d.hasContactForm) score -= 15;
-  if (!d.countryFrance && /hors Europe francophone|outside french europe/i.test(`${input.notes || ''} ${input.volumeSignaux?.join(' ') || ''}`)) score -= 15;
-  score = Math.max(0, Math.min(100, score));
-  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible' };
+  const { score, classement } = scoreProspectDetailed(input);
+  return { score, classement };
 }
+
 
 function normalizeProspect(draft, source = 'Apify') {
   const scored = scoreProspect(draft);
@@ -337,19 +318,66 @@ async function detectShopifyProductCount(siteWeb) {
   return undefined;
 }
 
+function normalizeExtractedEmail(value) {
+  return asString(value).replace(/\s*(?:\[at\]|\(at\))\s*/i, '@').replace(/\s*(?:\[dot\]|\(dot\))\s*/gi, '.').replace(/\s+/g, '');
+}
+
+function extractJsonLd(html) {
+  return Array.from(String(html || '').matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)).map((match) => match[1]).join('\n');
+}
+
 function extractContactData(html) {
-  const text = String(html || '').replace(/&amp;/g, '&');
-  const found = { email: '', telephone: '', instagram: '', facebook: '', tiktok: '', linkedin: '', frenchLegalNotice: false };
-  found.frenchLegalNotice = FRENCH_LEGAL_MARKERS.some((marker) => marker.test(text));
-  found.email = (text.match(EMAIL_REGEX) || []).find((email) => !/example|sentry|wixpress|shopify/i.test(email)) || '';
-  found.telephone = (text.match(PHONE_REGEX) || [])[0] || '';
+  const text = String(html || '').replace(/&amp;/g, '&').replace(/&#64;|&commat;/g, '@');
+  const jsonLd = extractJsonLd(text);
+  const found = { email: '', telephone: '', instagram: '', facebook: '', tiktok: '', linkedin: '', whatsapp: '', hasContactForm: false, frenchLegalNotice: false, hasShippingPage: false, hasPrivacyPolicy: false, hasLegalPage: false, internalLogistics: false, activeStore: false };
+  const haystack = `${text}\n${jsonLd}`;
+  found.frenchLegalNotice = FRENCH_LEGAL_MARKERS.some((marker) => marker.test(haystack));
+  found.hasContactForm = /<form[\s\S]{0,2500}(contact|email|message|name=)/i.test(text) || /action=["'][^"']*(contact|contact_post)/i.test(text);
+  found.hasShippingPage = /livraison|exp[ée]dition|shipping|delivery|colissimo|mondial relay|chronopost|transporteur/i.test(haystack);
+  found.hasPrivacyPolicy = /politique de confidentialit[ée]|privacy policy|donn[ée]es personnelles|RGPD/i.test(haystack);
+  found.hasLegalPage = found.frenchLegalNotice || /mentions? l[ée]gales?|SIRET|SIREN|RCS/i.test(haystack);
+  found.internalLogistics = /notre entrep[oô]t|nos entrep[oô]ts|logistique interne|exp[ée]di[ée]s? par nos soins|pr[ée]par[ée]s? dans nos ateliers|depuis notre atelier/i.test(haystack);
+  found.activeStore = /add-to-cart|data-product-id|product-form|checkout|cart|panier|prix|€|soldes|nouveaut[ée]s/i.test(haystack);
+  const emails = (haystack.match(EMAIL_REGEX) || []).map(normalizeExtractedEmail).filter((email) => !/example|sentry|wixpress|shopify|schema\.org|domain\.com/i.test(email));
+  const mailtos = Array.from(text.matchAll(/href=["']mailto:([^"'?]+)[^"']*["']/gi)).map((match) => normalizeExtractedEmail(match[1]));
+  found.email = [...mailtos, ...emails].find(Boolean) || '';
+  found.telephone = (haystack.match(PHONE_REGEX) || [])[0] || '';
   const hrefs = Array.from(text.matchAll(/href=["']([^"']+)["']/gi)).map((match) => match[1]);
   for (const href of hrefs) {
+    if (!found.whatsapp && /(wa\.me|whatsapp\.com|api\.whatsapp\.com)/i.test(href)) found.whatsapp = href.startsWith('http') ? href : `https://${href.replace(/^\/\//, '')}`;
     for (const [key, host] of Object.entries(SOCIAL_HOSTS)) {
+      if (key === 'whatsapp') continue;
       if (!found[key] && href.includes(host)) found[key] = cleanSocialUrl(href, host);
     }
   }
   return found;
+}
+
+function scoreProspectDetailed(input) {
+  const d = detectProspectSignals(input);
+  const details = [];
+  const add = (label, points, ok = true) => { if (ok) details.push({ label, points }); };
+  add('Shopify vérifié', 20, input.shopifyVerified);
+  add('Email trouvé', 25, Boolean(input.email));
+  add('Téléphone trouvé', 15, Boolean(input.telephone));
+  add('Formulaire de contact fonctionnel/détecté', 15, d.hasContactForm);
+  add('Zone France/francophone', 15, d.countryFrance);
+  add('Instagram actif', 8, d.instagramActive);
+  add('Facebook actif', 8, d.facebookActive);
+  add('TikTok actif', 8, d.tiktokActive);
+  add('WhatsApp détecté', 5, Boolean(d.whatsapp));
+  add('Mono-produit', 12, Boolean(d.isMonoProduct || (d.productCount && d.productCount <= 10)));
+  add('Petite boutique', 8, Boolean(d.productCount && d.productCount > 10 && d.productCount <= 50));
+  add('Livraison/expéditions présentes', 10, d.hasShippingPage || d.shipsToFrance);
+  add('Boutique active', 10, !d.inactiveStore);
+  add('Logistique interne détectée', -10, /logistique interne|notre entrep[oô]t|exp[ée]di[ée]s? par nos soins/i.test(`${input.notes || ''} ${input.volumeSignaux?.join(' ') || ''}`));
+  add('Marketplace détectée', -30, d.marketplace);
+  add('Grande enseigne détectée', -30, d.largeBrand);
+  add('Catalogue > 100 produits', -20, Boolean(d.productCount && d.productCount > 100));
+  add('Boutique inactive', -20, d.inactiveStore);
+  add('Aucun contact direct', -20, !input.email && !input.telephone && !d.hasContactForm);
+  const score = Math.max(0, Math.min(100, details.reduce((sum, item) => sum + item.points, 0)));
+  return { score, classement: score >= 85 ? 'ultra-chaud' : score >= 65 ? 'chaud' : score >= 40 ? 'moyen' : 'faible', details };
 }
 
 
@@ -406,28 +434,80 @@ function productSizeLabel(productCount) {
   return 'Grosse boutique : plus de 100 produits';
 }
 
+async function fetchText(url, userAgent = 'Mozilla/5.0 Colock Shopify qualification engine') {
+  const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': userAgent, accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8' } });
+  if (!response.ok) return '';
+  return response.text();
+}
+
+function pageSignal(url) {
+  if (/contact/i.test(url)) return 'page Contact visitée';
+  if (/a-propos|about/i.test(url)) return 'page À propos visitée';
+  if (/livraison|shipping|expedition/i.test(url)) return 'page Livraison visitée';
+  if (/mentions|legal|terms/i.test(url)) return 'Mentions légales visitées';
+  if (/privacy|confidentialit/i.test(url)) return 'Politique de confidentialité visitée';
+  if (/sitemap/i.test(url)) return 'sitemap analysé';
+  return 'page d’accueil/footer visités';
+}
+
+function mergeCollected(current, next) {
+  for (const [key, value] of Object.entries(next)) {
+    if (value && !current[key]) current[key] = value;
+    if (typeof value === 'boolean') current[key] = Boolean(current[key] || value);
+  }
+  return current;
+}
+
 async function enrichShopifyContactData(prospect) {
   if (!prospect.siteWeb) return prospect;
-  const pages = CONTACT_PATHS.map((path) => absoluteUrl(prospect.siteWeb, path)).filter(Boolean);
+  const pages = Array.from(new Set(CONTACT_PATHS.map((path) => absoluteUrl(prospect.siteWeb, path)).filter(Boolean)));
   const collected = {};
   const visited = [];
   const detectedPages = [];
   for (const url of pages) {
     try {
-      const response = await fetch(url, { redirect: 'follow', headers: { 'user-agent': 'Mozilla/5.0 Colock Shopify contact enricher' } });
-      if (!response.ok || !/text\/html/i.test(response.headers.get('content-type') || 'text/html')) continue;
+      const html = await fetchText(url);
+      if (!html) continue;
       visited.push(url);
-      if (/shipping|livraison|expedition/i.test(url)) detectedPages.push('page expédition détectée');
-      if (/refund|retours?/i.test(url)) detectedPages.push('politique de retour détectée');
-      Object.assign(collected, Object.fromEntries(Object.entries(extractContactData(await response.text())).filter(([, value]) => value)));
-      if (collected.email && collected.telephone && collected.instagram && collected.facebook && collected.tiktok && collected.linkedin) break;
+      detectedPages.push(pageSignal(url));
+      mergeCollected(collected, extractContactData(html));
+      if (!collected.email && /sitemap/i.test(url)) {
+        const legalUrls = Array.from(html.matchAll(/<loc>([^<]*(?:contact|mentions|legal|privacy|livraison|shipping)[^<]*)<\/loc>/gi)).slice(0, 8).map((m) => m[1]);
+        for (const legalUrl of legalUrls) {
+          const legalHtml = await fetchText(legalUrl);
+          if (legalHtml) { visited.push(legalUrl); detectedPages.push(pageSignal(legalUrl)); mergeCollected(collected, extractContactData(legalHtml)); }
+          if (collected.email) break;
+        }
+      }
+      if (collected.email && collected.telephone && collected.instagram && collected.facebook && collected.tiktok && collected.linkedin && collected.whatsapp) break;
     } catch {}
   }
-  const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => key !== 'frenchLegalNotice' && value && !prospect[key]));
+  const contactFields = Object.fromEntries(Object.entries(collected).filter(([key, value]) => ['email','telephone','instagram','facebook','tiktok','linkedin','whatsapp'].includes(key) && value && !prospect[key]));
   const productCount = prospect.productCount || await detectShopifyProductCount(prospect.siteWeb);
-  const enriched = normalizeProspect({ ...prospect, ...contactFields, productCount, volumeSignaux: [...prospect.volumeSignaux, visited.length ? `pages contact Shopify visitées: ${visited.length}` : 'pages contact Shopify introuvables', productCount ? `produits détectés: ${productCount}` : '', productSizeLabel(productCount), ...detectedPages, collected.email ? 'email public trouvé par exploration Shopify' : 'email absent après exploration Shopify', collected.frenchLegalNotice ? 'mentions légales françaises détectées' : ''].filter(Boolean), notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', collected.frenchLegalNotice ? 'Mentions légales françaises détectées.' : ''].filter(Boolean).join('\n') }, prospect.source);
-  return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle };
+  const scoreInput = { ...prospect, ...contactFields, productCount, hasContactForm: collected.hasContactForm || prospect.hasContactForm, hasShippingPage: collected.hasShippingPage || prospect.hasShippingPage, hasReturnPolicy: prospect.hasReturnPolicy, shipsToFrance: prospect.shipsToFrance || collected.hasShippingPage, inactiveStore: prospect.inactiveStore ?? !collected.activeStore };
+  const detailed = scoreProspectDetailed(scoreInput);
+  const scoreDetails = detailed.details.map((item) => `${item.points > 0 ? '+' : ''}${item.points} ${item.label}`).join(' · ');
+  const signals = [
+    visited.length ? `pages qualification visitées: ${visited.length}` : 'pages qualification introuvables',
+    ...Array.from(new Set(detectedPages)),
+    productCount ? `produits détectés: ${productCount}` : '',
+    productSizeLabel(productCount),
+    collected.hasContactForm ? 'formulaire de contact détecté' : '',
+    collected.hasShippingPage ? 'présence d’expéditions/livraison détectée' : '',
+    collected.internalLogistics ? 'logistique interne détectée' : '',
+    collected.activeStore ? 'boutique active détectée' : '',
+    collected.email ? 'email public trouvé par exploration complète' : 'email absent après mentions légales/mailto/JSON-LD/sitemap',
+    collected.frenchLegalNotice ? 'mentions légales françaises détectées' : '',
+    scoreDetails ? `score détaillé: ${scoreDetails}` : '',
+  ].filter(Boolean);
+  const enriched = normalizeProspect({ ...scoreInput, volumeSignaux: [...prospect.volumeSignaux, ...signals], notes: [prospect.notes, visited.length ? `Pages explorées: ${visited.join(', ')}` : '', scoreDetails ? `Score détaillé: ${scoreDetails}` : ''].filter(Boolean).join('\n') }, prospect.source);
+  return { ...prospect, ...enriched, id: prospect.id, shopifyVerified: prospect.shopifyVerified, sourceReelle: prospect.sourceReelle, score: detailed.score, classement: detailed.classement };
 }
+
+function hasQualifyingContact(prospect) {
+  return Boolean(asString(prospect.email) || asString(prospect.telephone) || prospect.hasContactForm);
+}
+
 
 function apifyShopifyItemToProspect(item, criteria) {
   const name = firstString(item, ['name', 'shopName', 'storeName', 'title', 'domain', 'store']);
@@ -489,6 +569,7 @@ function rejectReason(prospect) {
   if (prospect.marketplace || /amazon|cdiscount|rakuten|etsy marketplace|ebay/i.test(haystack)) return 'marketplace';
   if (prospect.largeBrand || isExcludedShopifyLead(prospect)) return /carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea|grande enseigne/i.test(haystack) ? 'grande enseigne' : 'marketplace';
   if (!prospect.shopifyVerified) return 'pas Shopify vérifié';
+  if (!hasQualifyingContact(prospect)) return 'pas de contact qualifiant';
   if ((prospect.score || 0) < 15) return 'score trop faible';
   return '';
 }
@@ -593,11 +674,49 @@ async function insertProspects(prospects) {
   return { added, ignored };
 }
 
+function dbToProspect(row) {
+  return normalizeProspect({
+    id: String(row.id), nomBoutique: String(row.nom_boutique || 'Prospect'), siteWeb: row.site_web, instagram: row.instagram, facebook: row.facebook, tiktok: row.tiktok, linkedin: row.linkedin, whatsapp: row.whatsapp, email: row.email, telephone: row.telephone,
+    plateforme: row.plateforme || 'Shopify', typeProduits: row.type_produits, ville: row.ville, pays: row.pays, sourceUrl: row.source_url, sourceReelle: row.source_reelle || 'Shopify', source: row.source || 'Apify', shopifyVerified: row.shopify_verified === true,
+    productCount: row.product_count, isMonoProduct: row.is_mono_product, hasContactForm: row.has_contact_form, hasShippingPage: row.has_shipping_page, hasReturnPolicy: row.has_return_policy, shipsToFrance: row.ships_to_france,
+    volumeSignaux: row.volume_signaux || [], notes: row.notes, createdAt: row.created_at,
+  }, row.source || 'Apify');
+}
+
+async function enrichExistingProspects() {
+  const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
+  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
+  if (!url || !key) throw new Error('Variables Supabase serveur manquantes pour enrichir les prospects existants');
+  const supabase = createClient(url, key, { auth: { persistSession: false } });
+  const optionalColumns = await detectOptionalProspectColumns(supabase);
+  const { data, error } = await supabase.from('prospects').select('*').neq('statut_contact', 'Supprimé').not('site_web', 'is', null);
+  if (error) throw error;
+  const prospects = (data || []).map(dbToProspect);
+  const enriched = [];
+  for (const prospect of prospects) enriched.push(await enrichShopifyContactData(prospect));
+  const rows = enriched.map((prospect) => toDb(prospect, optionalColumns.sourceReelle, optionalColumns.shopifyVerified, optionalColumns.facebook, optionalColumns.signalColumns));
+  if (rows.length) {
+    const { error: upsertError } = await supabase.from('prospects').upsert(rows, { onConflict: 'id' });
+    if (upsertError) throw upsertError;
+  }
+  const changed = enriched.filter((p, i) => ['email','telephone','instagram','facebook','tiktok','linkedin','whatsapp'].some((key) => asString(p[key]) && asString(p[key]) !== asString(prospects[i][key])) || p.hasContactForm !== prospects[i].hasContactForm).length;
+  return { prospects: enriched, changed };
+}
+
 async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') return res.status(405).json({ error: 'Méthode non autorisée' });
 
   const body = req.body || {};
+  if (body.mode === 'enrich-existing') {
+    try {
+      const result = await enrichExistingProspects();
+      return res.status(200).json({ prospects: result.prospects, itemsCount: result.prospects.length, insertedCount: result.changed, duplicateCount: 0, query: 'enrich-existing', progress: [`${result.prospects.length} prospects existants réanalysés`, `${result.changed} prospects enrichis avec de nouvelles coordonnées/signaux`] });
+    } catch (error) {
+      logError('[apify-prospects] Existing enrichment failed', error);
+      return res.status(500).json({ error: error instanceof Error ? error.message : 'Erreur enrichissement inconnue', details: describeError(error) });
+    }
+  }
   const criteria = body.criteria;
   const requestedPlatform = criteria?.platform;
   const actorId = normalizeActorId(DEFAULT_SHOPIFY_ACTOR_ID);
