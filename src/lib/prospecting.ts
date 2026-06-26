@@ -1,22 +1,25 @@
 export type Platform = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'eBay' | 'Dropshipping' | 'Marque e-commerce' | 'Inconnue';
 export type Ranking = 'ultra-chaud' | 'chaud' | 'moyen' | 'faible';
-export type ContactStatus = 'Nouveau' | 'Contacté' | 'Relance J+2' | 'Relance J+5' | 'Client signé' | 'Supprimé';
+export type ContactStatus = 'Nouveau' | 'Contacté' | 'Relance J+3' | 'Relance J+7' | 'Client signé' | 'Supprimé';
 export type ImportSource = 'Apify' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo';
 export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo' | 'Inconnue';
 
 
 export type EcommerceKeywordCategory = { category: string; keywords: string[] };
 export const ECOMMERCE_KEYWORD_LIBRARY: EcommerceKeywordCategory[] = [
-  { category: 'MODE', keywords: ['vêtement','vêtements','vêtements femme','vêtements homme','robe','robe femme','pantalon','jean','chemise','t-shirt','tee-shirt','sweat','pull','veste','manteau','lingerie','sous-vêtements','chaussures','baskets','sneakers','sac','sacs','maroquinerie','montre','montres','bijoux','lunettes','accessoires','accessoires mode','mode femme','mode homme','prêt-à-porter','pret a porter','streetwear','sportswear','costume','casquettes'] },
-  { category: 'BEAUTÉ', keywords: ['cosmétique','cosmétiques','maquillage','parfum','soins visage','soins corps','crème','huile','beauté bio','skincare','savon','shampoing','coiffure','esthétique','ongles','bien-être','barbier'] },
-  { category: 'MAISON', keywords: ['décoration','meuble','meubles','cuisine','salle de bain','rangement','textile maison','linge de maison','jardin','bricolage','éclairage','mobilier','bougies','art de la table','plantes'] },
-  { category: 'SPORT', keywords: ['fitness','musculation','yoga','running','vélo','cyclisme','randonnée','crossfit','sportwear','sportswear','nutrition sportive','natation','tennis','football'] },
-  { category: 'ANIMAUX', keywords: ['chien','chat','animalerie','accessoires animaux','alimentation chien','alimentation chat','aquarium'] },
-  { category: 'HIGH TECH', keywords: ['informatique','gaming','smartphone','accessoires téléphone','électronique','domotique','objets connectés'] },
-  { category: 'ALIMENTAIRE', keywords: ['épicerie','bio','complément alimentaire','compléments alimentaires','nutrition','thé','café'] },
-  { category: 'ENFANTS', keywords: ['bébé','jouets','puériculture','vêtements enfant','jeux éducatifs'] },
-  { category: 'AUTO MOTO', keywords: ['automobile','moto','accessoires auto','accessoires moto'] },
-  { category: 'B2B', keywords: ['grossiste','fournisseur','industriel','matériel professionnel','emballage','fournitures bureau','équipements professionnels','artisanat'] },
+  { category: 'MODE', keywords: ['mode','vêtements','vêtements femme','vêtements homme','robe','pantalon','jean','chemise','t-shirt','sweat','pull','veste','manteau','chaussures','baskets','sneakers','maroquinerie','sacs','lingerie','bijoux','montres','lunettes','accessoires mode','streetwear','sportswear','costume','casquettes'] },
+  { category: 'BEAUTÉ', keywords: ['beauté','cosmétiques','maquillage','parfum','soins visage','soins corps','crème','huile','beauté bio','skincare','savon','shampoing','coiffure','barbier','esthétique','ongles','bien-être'] },
+  { category: 'BÉBÉ & ENFANTS', keywords: ['bébé','enfants','jouets','puériculture','vêtements enfant','jeux éducatifs','doudou','naissance','maternité'] },
+  { category: 'ANIMAUX', keywords: ['animaux','chien','chat','animalerie','accessoires animaux','alimentation chien','alimentation chat','aquarium'] },
+  { category: 'SPORT', keywords: ['sport','fitness','musculation','yoga','running','vélo','cyclisme','randonnée','crossfit','nutrition sportive','natation','tennis','football'] },
+  { category: 'MAISON', keywords: ['maison','décoration','meubles','cuisine','salle de bain','rangement','linge de maison','jardin','bricolage','éclairage','LED','bougies','art de la table','plantes'] },
+  { category: 'AUTO MOTO OUTDOOR', keywords: ['auto','moto','accessoires auto','accessoires moto','camping','pêche','randonnée','vanlife','outdoor'] },
+  { category: 'HIGH-TECH', keywords: ['high-tech','gaming','téléphone','accessoires téléphone','informatique','électronique','domotique','objets connectés','éclairage LED'] },
+  { category: 'ARTISANAT & CADEAUX', keywords: ['artisanat','créateurs','papeterie','cadeaux','mariage','bijoux créateur','illustration','affiches','personnalisé'] },
+  { category: 'VOYAGE & ÉCOLOGIE', keywords: ['voyage','écologie','zéro déchet','bio','produits naturels','gourde','accessoires voyage','upcycling'] },
+  { category: 'ALIMENTAIRE', keywords: ['épicerie','boissons','café','thé','compléments alimentaires','nutrition','chocolat','épices','CBD autorisé'] },
+  { category: 'B2B & INDUSTRIE', keywords: ['B2B','industrie','impression 3D','grossiste','fournisseur','matériel professionnel','emballage','fournitures bureau','équipements professionnels'] },
+  { category: 'NICHES PERTINENTES', keywords: ['petite marque ecommerce','boutique mono produit','marque DTC','nouvelle marque française','concept store en ligne','boutique Shopify indépendante'] },
 ];
 export const QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY = 1000;
 export const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ category, keywords }) => keywords.map((keyword) => ({ category, keyword, query: `${keyword} France` })));
@@ -31,6 +34,11 @@ export type Campaign = { id: string; nom: string; cible: string; statut: 'draft'
 export type SearchCriteria = { platform: Platform | 'Toutes'; productType: string; location: string; keywords: string };
 export type ProspectImportDraft = Partial<Prospect> & { nomBoutique: string };
 export type ApifyImportResult = { prospects: Prospect[]; rawItems?: Record<string, unknown>[]; query: string; itemsCount: number; insertedCount?: number; duplicateCount?: number; progress?: string[] };
+export type AutoProspectingQuota = 100 | 500 | 1000 | 'illimité';
+export type AutoSearchHistoryEntry = { id: string; country: string; niche: string; keyword: string; query: string; searchedAt: string; insertedCount: number; duplicateCount: number; qualifiedCount: number };
+export type ProspectChannelMessages = { email: string; linkedin: string; instagram: string; sms: string; followUpJ3: string; followUpJ7: string };
+export const AUTO_PROSPECTING_COUNTRIES = ['France', 'Belgique', 'Suisse', 'Luxembourg'];
+export const AUTO_PROSPECTING_QUOTAS: AutoProspectingQuota[] = [100, 500, 1000, 'illimité'];
 export type ApifyProgressStep = 'token-detected' | 'actor-started' | 'dataset-retrieved' | 'results-found' | 'prospects-inserted';
 export type ApifyProgress = { step: ApifyProgressStep; message: string; count?: number };
 
@@ -44,7 +52,7 @@ export function isQualifiedShopifyProspect(prospect: Partial<Prospect>) { return
 const nowIso = () => new Date().toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 86400000).toISOString();
 
-export const prospectStatuses: ContactStatus[] = ['Nouveau', 'Contacté', 'Relance J+2', 'Relance J+5', 'Client signé'];
+export const prospectStatuses: ContactStatus[] = ['Nouveau', 'Contacté', 'Relance J+3', 'Relance J+7', 'Client signé'];
 
 export function dedupeKey(input: Partial<Prospect>) {
   const first = [input.email, input.telephone, input.siteWeb, input.instagram, input.tiktok, input.nomBoutique].find(Boolean) ?? crypto.randomUUID();
@@ -160,7 +168,7 @@ export function buildApifyShopifyInput(criteria: SearchCriteria, maxItems = DEFA
   const customQuery = [criteria.keywords, product, location].filter(Boolean).join(' ').trim();
   const queries = Array.from(new Set([customQuery, ...PRIORITY_SHOPIFY_QUERIES].filter(Boolean)));
   const query = queries[0];
-  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: 'France', location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: true, requireSocial: true, requireProducts: true, qualificationRules: ['shopify_verified','email_found','instagram_or_facebook','france_priority'] };
+  return { query, keyword: query, keywords: queries, search: query, searchQuery: query, searchTerms: queries, queries, maxItems, maxResults: maxItems, limit: maxItems, country: location, location, language: 'fr', platform: 'shopify', onlyShopify: true, includeEmails: true, includePhones: true, requireEmail: true, requireSocial: true, requireProducts: true, qualificationRules: ['shopify_verified','email_found','instagram_or_facebook','france_priority'] };
 }
 
 export function buildApifyGoogleMapsInput(criteria: SearchCriteria, maxItems = DEFAULT_APIFY_MAX_ITEMS) {
@@ -265,9 +273,45 @@ export async function fetchApifyProspects(actorId: string, token: string, criter
   return result;
 }
 
-export function generateMessage(prospect: Prospect, step: 0 | 2 | 5 | 10 = 0) { const firstLine = prospect.typeProduits ? `J’ai vu votre boutique ${prospect.nomBoutique} autour de ${prospect.typeProduits}.` : `J’ai vu votre boutique ${prospect.nomBoutique}.`; const local = prospect.ville ? ` depuis Montpellier / Lavérune / Le Crès vers vos clients` : ' depuis Montpellier / Lavérune / Le Crès'; const base = `${firstLine}\n\nChez Colock-Gistik, nous aidons les vendeurs e-commerce à externaliser la réception marchandise, le stockage, la préparation colis, l’emballage et l’expédition multi-transporteurs${local}.\n\nSi vous expédiez régulièrement des colis, je peux vous proposer une solution simple pour gagner du temps sans recruter ni louer plus d’espace.\n\nEst-ce que je peux vous envoyer une estimation rapide adaptée à vos volumes ?\n\nBonne journée,\nL’équipe Colock-Gistik`; const relances: Record<number, string> = { 2: `Bonjour,\n\nJe me permets une relance rapide concernant ${prospect.nomBoutique}. Si vos commandes augmentent, Colock-Gistik peut prendre en charge stockage, préparation et expédition depuis la métropole de Montpellier.\n\nSouhaitez-vous que je vous envoie une proposition courte ?`, 5: `Bonjour,\n\nJe reviens vers vous une dernière fois cette semaine. Nous accompagnons des petites marques e-commerce qui veulent expédier plus vite sans gérer l’entrepôt au quotidien.\n\nSi ce n’est pas le bon moment, dites-le moi et je ne vous relancerai pas.`, 10: `Bonjour,\n\nJe clôture ma prise de contact pour ${prospect.nomBoutique}. Si vous cherchez plus tard une solution de stockage, préparation colis et expédition multi-transporteurs à Montpellier, vous pouvez me répondre ici.\n\nBonne continuation !` }; return step === 0 ? base : relances[step]; }
+export function generateMessage(prospect: Prospect, step: 0 | 3 | 7 = 0) {
+  const firstLine = prospect.typeProduits ? `J’ai vu votre boutique ${prospect.nomBoutique} autour de ${prospect.typeProduits}.` : `J’ai vu votre boutique ${prospect.nomBoutique}.`;
+  const local = prospect.ville ? ` depuis Montpellier / Lavérune / Le Crès vers vos clients` : ' depuis Montpellier / Lavérune / Le Crès';
+  const base = `${firstLine}
+
+Chez Colock-Gistik, nous aidons les vendeurs e-commerce à externaliser la réception marchandise, le stockage, la préparation colis, l’emballage et l’expédition multi-transporteurs${local}.
+
+Si vous expédiez régulièrement des colis, je peux vous proposer une solution simple pour gagner du temps sans recruter ni louer plus d’espace.
+
+Est-ce que je peux vous envoyer une estimation rapide adaptée à vos volumes ?
+
+Bonne journée,
+L’équipe Colock-Gistik`;
+  const relances: Record<3 | 7, string> = {
+    3: `Bonjour,
+
+Je me permets une relance rapide concernant ${prospect.nomBoutique}. Si vos commandes augmentent, Colock-Box peut prendre en charge stockage, préparation et expédition depuis la métropole de Montpellier.
+
+Souhaitez-vous que je vous envoie une proposition courte ?`,
+    7: `Bonjour,
+
+Je reviens vers vous une dernière fois cette semaine. Nous accompagnons des petites marques e-commerce qui veulent expédier plus vite sans gérer l’entrepôt au quotidien.
+
+Si ce n’est pas le bon moment, dites-le moi et je ne vous relancerai pas.`,
+  };
+  return step === 0 ? base : relances[step];
+}
+
+export function generateChannelMessages(prospect: Prospect): ProspectChannelMessages {
+  const niche = prospect.niche || prospect.typeProduits || 'votre boutique';
+  const email = generateMessage(prospect);
+  const linkedin = `Bonjour, j’ai repéré ${prospect.nomBoutique} (${niche}). Colock-Box peut vous aider à stocker, préparer et expédier vos colis depuis Montpellier sans recruter. Ouvert à un échange de 10 minutes ?`;
+  const instagram = `Bonjour ${prospect.nomBoutique} 👋 J’ai vu vos produits ${niche}. Colock-Box peut gérer stockage + préparation + expédition pour les petites marques Shopify. Je peux vous envoyer une estimation simple ?`;
+  const sms = `Bonjour, ici Colock-Box. J’ai repéré ${prospect.nomBoutique}; nous aidons les boutiques e-commerce à externaliser stockage/préparation/expédition. Intéressé(e) par une estimation rapide ?`;
+  return { email, linkedin, instagram, sms, followUpJ3: generateMessage(prospect, 3), followUpJ7: generateMessage(prospect, 7) };
+}
+
 export function buildSearchLinks(criteria: SearchCriteria) { const target = [criteria.platform !== 'Toutes' ? criteria.platform : 'e-commerce', criteria.productType, criteria.location, criteria.keywords].filter(Boolean).join(' '); return [{ label: 'Google boutiques', url: `https://www.google.com/search?q=${encodeURIComponent(`${target} contact livraison colis`)}` }, { label: 'Instagram', url: `https://www.google.com/search?q=${encodeURIComponent(`site:instagram.com ${target} boutique`)}` }, { label: 'TikTok', url: `https://www.google.com/search?q=${encodeURIComponent(`site:tiktok.com ${target} shop`)}` }, { label: 'Etsy', url: `https://www.etsy.com/search/shops?search_query=${encodeURIComponent(criteria.productType || criteria.keywords || 'france')}` }]; }
 const templates = [['Maison Luma','https://maison-luma.example','@maisonluma','','','contact@maison-luma.example','','Shopify','décoration maison','Montpellier',['mentions expédition 24/48h','nouveautés chaque semaine','avis clients nombreux']], ['GlowCase FR','https://glowcase.example','@glowcasefr','@glowcasefr','','hello@glowcase.example','','TikTok Shop','accessoires téléphone','France',['live shopping','promos quotidiennes','dropshipping probable']]] as const;
 export function mockProspectSearch(criteria: SearchCriteria): Prospect[] { return templates.filter((row) => criteria.platform === 'Toutes' || row[7] === criteria.platform).map((row, index) => normalizeProspect({ nomBoutique: row[0], siteWeb: row[1], instagram: row[2], tiktok: row[3], linkedin: row[4], email: row[5], telephone: row[6], plateforme: row[7] as Platform, typeProduits: criteria.productType || row[8], ville: criteria.location || row[9], pays: 'France', volumeSignaux: [...row[10]], sourceUrl: row[1], sourceReelle: resolveRealSource(row[7] as Platform), nextFollowUpAt: addDays(index + 2), notes: 'Donnée publique à vérifier avant contact.' }, 'Démo')); }
-export const followUpDays = [2, 5, 10];
+export const followUpDays = [3, 7];
 export function defaultCampaigns(): Campaign[] { return [{ id: crypto.randomUUID(), nom: 'E-commerce Sud France', cible: 'Shopify, TikTok Shop et marques e-commerce Occitanie', statut: 'active', createdAt: nowIso() }]; }
