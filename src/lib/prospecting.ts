@@ -1,5 +1,5 @@
 export type Platform = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'eBay' | 'Dropshipping' | 'Marque e-commerce' | 'Inconnue';
-export type Ranking = 'chaud' | 'moyen' | 'faible';
+export type Ranking = 'ultra-chaud' | 'chaud' | 'moyen' | 'faible';
 export type ContactStatus = 'Nouveau' | 'Contacté' | 'Relance J+2' | 'Relance J+5' | 'Client signé' | 'Supprimé';
 export type ImportSource = 'Apify' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo';
 export type RealSource = 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Google Maps' | 'CSV' | 'Démo' | 'Inconnue';
@@ -22,9 +22,9 @@ export const QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY = 1000;
 export const ECOMMERCE_KEYWORD_QUERIES = ECOMMERCE_KEYWORD_LIBRARY.flatMap(({ category, keywords }) => keywords.map((keyword) => ({ category, keyword, query: `${keyword} France` })));
 
 export type Prospect = {
-  id: string; nomBoutique: string; siteWeb?: string; instagram?: string; facebook?: string; tiktok?: string; linkedin?: string; email?: string; telephone?: string;
+  id: string; nomBoutique: string; siteWeb?: string; instagram?: string; facebook?: string; tiktok?: string; linkedin?: string; whatsapp?: string; email?: string; telephone?: string;
   plateforme: Platform; typeProduits: string; ville: string; pays: string; score: number; classement: Ranking; statutContact: ContactStatus;
-  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
+  volumeSignaux: string[]; sourceUrl: string; source: ImportSource; sourceReelle: RealSource; shopifyVerified: boolean; productCount?: number; isMonoProduct?: boolean; niche?: string; hasContactForm?: boolean; hasShippingPage?: boolean; hasReturnPolicy?: boolean; professionalDomain?: boolean; instagramActive?: boolean; facebookActive?: boolean; tiktokActive?: boolean; shipsToFrance?: boolean; recentStore?: boolean; strongAdPresence?: boolean; marketplace?: boolean; largeBrand?: boolean; inactiveStore?: boolean; campaignId?: string; notes?: string; lastContactAt?: string; nextFollowUpAt?: string; createdAt: string;
 };
 
 export type Campaign = { id: string; nom: string; cible: string; statut: 'draft' | 'active' | 'paused' | 'done'; createdAt: string };
@@ -51,18 +51,62 @@ export function dedupeKey(input: Partial<Prospect>) {
   return String(first).toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[^a-z0-9@.+-]+/g, '').trim();
 }
 
-export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
+export function detectProspectSignals(input: Partial<Prospect> & { volumeSignaux?: string[] }) {
   const signals = input.volumeSignaux ?? [];
-  const haystack = `${input.pays ?? ''} ${input.ville ?? ''} ${signals.join(' ')} ${input.notes ?? ''}`;
+  const haystack = `${input.nomBoutique ?? ''} ${input.siteWeb ?? ''} ${input.pays ?? ''} ${input.ville ?? ''} ${input.typeProduits ?? ''} ${signals.join(' ')} ${input.notes ?? ''}`;
+  const productCount = input.productCount ?? (Number((haystack.match(/(?:produits?|products?)\s*(?:détectés?|count)?\s*[:=]?\s*(\d+)/i) ?? [])[1] ?? NaN) || undefined);
+  const isMonoProduct = input.isMonoProduct ?? (Boolean(productCount && productCount >= 1 && productCount <= 10) || /mono[- ]?produit|single[- ]?product|1 à 10 produits/i.test(haystack));
+  const countryFrance = /France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b|\bFR\b/i.test(haystack);
+  const instagramActive = input.instagramActive ?? Boolean(input.instagram && !/instagram inactive|instagram absent/i.test(haystack));
+  const facebookActive = input.facebookActive ?? Boolean(input.facebook && !/facebook inactive|facebook absent/i.test(haystack));
+  const tiktokActive = input.tiktokActive ?? Boolean(input.tiktok && !/tiktok inactive|tiktok absent/i.test(haystack));
+  const hasShippingPage = input.hasShippingPage ?? /page expédition|livraison|shipping|delivery/i.test(haystack);
+  const hasReturnPolicy = input.hasReturnPolicy ?? /politique de retour|retours?|returns?|refund/i.test(haystack);
+  const hasContactForm = input.hasContactForm ?? /formulaire de contact|contact form|page contact/i.test(haystack);
+  const shipsToFrance = input.shipsToFrance ?? /expédition France|livraison France|ships to France|shipping to France/i.test(haystack);
+  const professionalDomain = input.professionalDomain ?? Boolean(input.siteWeb && !/(myshopify\.com|wixsite|wordpress\.com|blogspot|example\.)/i.test(input.siteWeb));
+  return {
+    productCount,
+    isMonoProduct,
+    niche: input.niche || input.typeProduits || 'e-commerce',
+    countryFrance,
+    instagramActive,
+    facebookActive,
+    tiktokActive,
+    whatsapp: input.whatsapp || (/whatsapp/i.test(haystack) ? 'WhatsApp détecté' : undefined),
+    hasContactForm,
+    hasShippingPage,
+    hasReturnPolicy,
+    professionalDomain,
+    shipsToFrance,
+    recentStore: input.recentStore ?? /boutique récente|new store|nouvelle boutique|lancée? en 202[4-6]/i.test(haystack),
+    strongAdPresence: input.strongAdPresence ?? /Meta Ads|Facebook Ads|TikTok Ads|ads library|publicit[ée] active|forte présence publicitaire/i.test(haystack),
+    marketplace: input.marketplace ?? /marketplace|amazon|cdiscount|fnac|rakuten|etsy marketplace|ebay/i.test(haystack),
+    largeBrand: input.largeBrand ?? /grande enseigne|carrefour|auchan|leclerc|decathlon|fnac|zara|h&m|sephora|ikea/i.test(haystack),
+    inactiveStore: input.inactiveStore ?? /boutique inactive|site inactif|inactive|dernière publication ancienne|rupture générale/i.test(haystack),
+  };
+}
+
+export function scoreProspect(input: Partial<Prospect> & { volumeSignaux?: string[] }): { score: number; classement: Ranking } {
+  const d = detectProspectSignals(input);
   let score = 0;
-  if (input.email) score += 5;
-  if (input.telephone) score += 2;
-  if (/France vérifiée|mentions légales françaises|téléphone \+33|adresse France|\bFrance\b/i.test(haystack)) score += 4;
-  if (input.shopifyVerified) score += 4;
-  if (input.siteWeb && !/boutique inactive|site inactif|inactive/i.test(haystack)) score += 2;
-  if (input.instagram || input.facebook) score += 3;
-  score = Math.min(20, score);
-  return { score, classement: score >= 16 ? 'chaud' : score >= 10 ? 'moyen' : 'faible' };
+  if (d.isMonoProduct) score += 30;
+  if (input.email) score += 20;
+  if (input.telephone) score += 15;
+  if (d.countryFrance) score += 15;
+  if (d.instagramActive) score += 10;
+  if (d.facebookActive) score += 10;
+  if (d.tiktokActive) score += 15;
+  if (input.shopifyVerified) score += 10;
+  if (d.recentStore) score += 10;
+  if (d.shipsToFrance) score += 15;
+  if (d.strongAdPresence) score += 10;
+  if (d.productCount && d.productCount > 100) score -= 30;
+  if (d.marketplace) score -= 20;
+  if (d.largeBrand) score -= 20;
+  if (d.inactiveStore) score -= 15;
+  score = Math.max(0, Math.min(100, score));
+  return { score, classement: score >= 90 ? 'ultra-chaud' : score >= 75 ? 'chaud' : score >= 50 ? 'moyen' : 'faible' };
 }
 
 export function resolveRealSource(platform: SearchCriteria['platform'] | Platform | ImportSource): RealSource {
@@ -77,7 +121,7 @@ export function isGoogleMapsActor(actorId: string) {
 export function normalizeProspect(draft: ProspectImportDraft, source: ImportSource = 'CSV'): Prospect {
   const scored = scoreProspect(draft);
   const sourceReelle = draft.sourceReelle ?? resolveRealSource(source === 'Apify' ? draft.plateforme ?? 'Inconnue' : source);
-  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
+  return { id: draft.id ?? crypto.randomUUID(), nomBoutique: draft.nomBoutique.trim(), siteWeb: draft.siteWeb?.trim() || undefined, instagram: draft.instagram?.trim() || undefined, facebook: draft.facebook?.trim() || undefined, tiktok: draft.tiktok?.trim() || undefined, linkedin: draft.linkedin?.trim() || undefined, email: draft.email?.trim() || undefined, telephone: draft.telephone?.trim() || undefined, plateforme: draft.plateforme ?? 'Inconnue', typeProduits: draft.typeProduits?.trim() || 'e-commerce', ville: draft.ville?.trim() || 'France', pays: draft.pays?.trim() || 'France', ...scored, ...detectProspectSignals(draft), statutContact: draft.statutContact ?? 'Nouveau', volumeSignaux: draft.volumeSignaux?.filter(Boolean) ?? [], sourceUrl: draft.sourceUrl?.trim() || draft.siteWeb?.trim() || '', source, sourceReelle, campaignId: draft.campaignId, notes: draft.notes, shopifyVerified: draft.shopifyVerified ?? false, lastContactAt: draft.lastContactAt, nextFollowUpAt: draft.nextFollowUpAt, createdAt: draft.createdAt ?? nowIso() };
 }
 
 export function mergeProspects(existing: Prospect[], incoming: Prospect[]) {
@@ -102,7 +146,7 @@ export function parseCsvProspects(csv: string, source: ImportSource = 'CSV') {
   return lines.map((line) => {
     const cells = line.match(/("(?:""|[^"])*"|[^,]+)/g)?.map((c)=>c.replace(/^"|"$/g, '').replaceAll('""','"').trim()) ?? [];
     const get = (...names: string[]) => cells[headers.findIndex((h)=>names.includes(h))] || '';
-    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), facebook: get('facebook'), tiktok: get('tiktok'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), shopifyVerified: get('shopify_verified','shopifyVerified') === 'true', notes: `Import ${source}` }, source);
+    return normalizeProspect({ nomBoutique: get('nom_boutique','boutique','name','shop_name') || 'Boutique importée', siteWeb: get('site_web','website','url'), instagram: get('instagram'), facebook: get('facebook'), tiktok: get('tiktok'), whatsapp: get('whatsapp'), email: get('email'), telephone: get('telephone','phone'), plateforme: (get('plateforme','platform') as Platform) || (source === 'TikTok Shop' ? 'TikTok Shop' : source === 'Shopify' ? 'Shopify' : source === 'Vinted' ? 'Vinted' : source === 'Etsy' ? 'Etsy' : 'Inconnue'), typeProduits: get('type_produits','products','category'), ville: get('ville','city'), pays: get('pays','country') || 'France', sourceUrl: get('source','source_url','url'), volumeSignaux: get('signaux','signals').split('|').map((s)=>s.trim()).filter(Boolean), sourceReelle: resolveRealSource(source), shopifyVerified: get('shopify_verified','shopifyVerified') === 'true', productCount: Number(get('product_count','products_count','nombre_produits')) || undefined, notes: `Import ${source}` }, source);
   });
 }
 
