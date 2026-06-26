@@ -40,8 +40,8 @@ const PROSPECT_CHECK_CONSTRAINTS: Record<string, ProspectCheckConstraint> = {
   prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
   prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
   prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+3, Relance J+7, Client signé, Supprimé' },
-  prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
-  prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },
+  prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Instagram, Google, Google Maps, CSV, Démo' },
+  prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Instagram, Google, Google Maps, CSV, Démo, Inconnue' },
 };
 
 function getCheckConstraintName(error: unknown) {

@@ -27,9 +27,9 @@ create table if not exists prospects (
   classement text not null default 'faible' check (classement in ('ultra-chaud','chaud','moyen','faible')),
   statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+3','Relance J+7','Client signé','Supprimé')),
   volume_signaux text[] not null default '{}',
-  source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
+  source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo')),
   source_url text,
-  source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
+  source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo','Inconnue')),
   shopify_verified boolean not null default false,
   rgpd_source_publique boolean not null default true,
   rgpd_opt_out boolean not null default false,
@@ -90,9 +90,9 @@ alter table prospects add constraint prospects_score_check check (score between 
 update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
 alter table prospects alter column source_reelle set default 'Google Maps';
 alter table prospects drop constraint if exists prospects_source_check;
-alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
+alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo'));
 alter table prospects drop constraint if exists prospects_source_reelle_check;
-alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue'));
+alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo','Inconnue'));
 
 create index if not exists prospects_shopify_verified_idx on prospects(shopify_verified desc, score desc);
 create index if not exists prospects_colock_gistik_score_idx on prospects(score desc, shopify_verified desc);
@@ -139,9 +139,9 @@ begin
     classement text not null default 'faible' check (classement in ('ultra-chaud','chaud','moyen','faible')),
     statut_contact text not null default 'Nouveau' check (statut_contact in ('Nouveau','Contacté','Relance J+3','Relance J+7','Client signé','Supprimé')),
     volume_signaux text[] not null default '{}',
-    source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo')),
+    source text not null default 'CSV' check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo')),
     source_url text,
-    source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue')),
+    source_reelle text not null default 'Google Maps' check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo','Inconnue')),
     shopify_verified boolean not null default false,
     rgpd_source_publique boolean not null default true,
     rgpd_opt_out boolean not null default false,
@@ -203,9 +203,9 @@ alter table prospects add column if not exists facebook text;
   update prospects set source_reelle = 'Google Maps' where source_reelle is null or btrim(source_reelle) = '' or source_reelle = 'Inconnue';
   alter table prospects alter column source_reelle set default 'Google Maps';
   alter table prospects drop constraint if exists prospects_source_check;
-  alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo'));
+  alter table prospects add constraint prospects_source_check check (source in ('Apify','Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo'));
   alter table prospects drop constraint if exists prospects_source_reelle_check;
-  alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Google Maps','CSV','Démo','Inconnue'));
+  alter table prospects add constraint prospects_source_reelle_check check (source_reelle in ('Shopify','Vinted','TikTok Shop','Etsy','Instagram','Google','Google Maps','CSV','Démo','Inconnue'));
 
   create unique index if not exists messages_prospect_sujet_idx on messages(prospect_id, sujet);
   create unique index if not exists relances_prospect_rang_idx on relances(prospect_id, rang);
