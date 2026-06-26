@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, Bot, Calculator, Download, ExternalLink, Mail, PackageCheck, Plus, RefreshCw, Search as SearchIcon, ShieldCheck, Trash2, Upload, Rocket, ShoppingBag, BarChart3, Wand2, Warehouse, Truck, Users, LineChart } from 'lucide-react';
+import { AlertTriangle, Bot, Calculator, Download, ExternalLink, Mail, PackageCheck, Plus, RefreshCw, Search as SearchIcon, ShieldCheck, Trash2, Upload, Rocket, ShoppingBag, BarChart3, Wand2, Warehouse, Truck, Users, LineChart, Euro, PackagePlus, Send, ClipboardCheck, Box, CreditCard, Sparkles } from 'lucide-react';
 import Layout, { type PageKey } from './components/Layout';
 import { V2Bars, V2MetricCard, V2Panel, V2Table } from './components/V2Shell';
 import { buildSearchLinks, defaultCampaigns, ECOMMERCE_KEYWORD_LIBRARY, ECOMMERCE_KEYWORD_QUERIES, QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY, fetchApifyProspects, enrichExistingProspects, qualifiedTargetPerKeyword, followUpDays, generateMessage, generateChannelMessages, AUTO_PROSPECTING_COUNTRIES, AUTO_PROSPECTING_QUOTAS, mergeProspects, mockProspectSearch, parseCsvProspects, prospectStatuses, scoreProspect, type Campaign, type Platform, type Prospect, type ApifyProgress, type SearchCriteria, type AutoProspectingQuota, type AutoSearchHistoryEntry, type RejectedProspect, isPriorityProspect, COLOCK_PRIORITY_KEYWORDS } from './lib/prospecting';
@@ -197,10 +197,12 @@ export default function App() {
   const activeProspects = prospects.filter((p) => p.statutContact !== 'Supprimé');
   const hotProspects = activeProspects.filter((p) => p.classement === 'ultra-chaud' || p.classement === 'chaud');
   const dashboardKpis = [
-    ['Revenue run-rate', '2 840 €', '+12.4% vs hier', BarChart3, 'blue'],
-    ['Inbound parcels', '126', '+18 reçus', PackageCheck, 'green'],
-    ['Outbound SLA', '96%', '98 expédiés', Truck, 'purple'],
-    ['AI prospects', metrics.found, `${metrics.qualificationRate}% qualifiés`, Bot, 'orange'],
+    ['CA du jour', '2 840 €', '+12% vs hier', Euro, 'orange'],
+    ['Colis reçus', '126', '+18 entrants', PackagePlus, 'green'],
+    ['Colis expédiés', '98', 'SLA 96%', Send, 'orange'],
+    ['Préparations', '14', 'à traiter', ClipboardCheck, 'purple'],
+    ['Box libres', '32', 'capacité OK', Box, 'green'],
+    ['Impayés', '6 420 €', '6 factures', CreditCard, 'orange'],
   ] as const;
   const preparationRows = activeProspects.slice(0, 6).map((p, i) => [
     <strong>PREP-{String(i + 1248).padStart(4, '0')}</strong>,
@@ -208,17 +210,31 @@ export default function App() {
     <span className="v2-tag">Picking & packing</span>,
     <em>{p.classement}</em>,
   ]);
-  const dashboardElement = <div className="v2-page">
-    <section className="v2-hero">
-      <div className="v2-hero-copy"><span className="v2-pill">COLOCK-BOX OS · V2 redesign</span><h2>Un cockpit premium pour piloter stockage, fulfilment et croissance IA.</h2><p>Nouvelle base visuelle inspirée Linear, Stripe, HubSpot et Notion : navigation dense, topbar premium, cartes KPI, tableaux et graphiques reconstruits sans dépendre de l’ancienne V1.</p><div className="v2-hero-actions"><a className="v2-primary" href="#logistique"><Warehouse/> Voir les opérations</a><a className="v2-secondary" href="#prospection"><Bot/> Lancer l’IA</a></div></div>
-      <div className="v2-hero-card"><span>Today’s focus</span><strong>14</strong><small>préparations à prioriser</small><V2Bars values={[42, 64, 51, 83, 72, 91, 78]}/></div>
+  const orderRows = (activeProspects.length ? activeProspects : visibleProspects).slice(0, 7).map((p, i) => [
+    <strong>CMD-{String(i + 4312).padStart(5, '0')}</strong>,
+    p.nomBoutique,
+    <span className="v2-tag">En préparation</span>,
+    <em>{p.score}/100</em>,
+  ]);
+  const quickActions = [
+    ['Nouvelle réception', '#logistique', PackagePlus],
+    ['Nouvelle préparation', '#logistique', ClipboardCheck],
+    ['Nouvelle expédition', '#transporteurs', Send],
+    ['Nouveau prospect', '#search', Bot],
+    ['Ajouter client', '#clients', Users],
+  ] as const;
+  const dashboardElement = <div className="v2-page v3-dashboard">
+    <section className="v3-quick-actions" aria-label="Boutons rapides">
+      {quickActions.map(([label, href, Icon]) => <a href={href} key={label}><Icon size={17}/>{label}</a>)}
     </section>
-    <section className="v2-metric-grid">{dashboardKpis.map(([label,value,delta,Icon,tone])=><V2MetricCard key={label} label={label} value={value} delta={delta} icon={Icon} tone={tone as 'blue' | 'green' | 'orange' | 'purple'}/>)}</section>
-    <section className="v2-dashboard-grid">
-      <V2Panel title="Fulfilment volume" eyebrow="Analytics" className="v2-wide"><V2Bars values={[58,82,46,72,64,90,76,68,84]}/><p className="v2-muted">Graphique reconstruit pour la V2 ; les données métier seront reconnectées progressivement.</p></V2Panel>
-      <V2Panel title="Priority accounts" eyebrow="Growth"><div className="v2-account-list">{hotProspects.slice(0,5).map((p)=><button onClick={()=>select(p.id)} key={p.id}><span>{p.nomBoutique}</span><strong>{p.score}/100</strong><small>{p.ville}</small></button>)}{!hotProspects.length ? <p className="v2-empty">Aucun compte prioritaire pour le moment.</p> : null}</div></V2Panel>
+    <section className="v2-metric-grid v3-kpi-row">{dashboardKpis.map(([label,value,delta,Icon,tone])=><V2MetricCard key={label} label={label} value={value} delta={delta} icon={Icon} tone={tone as 'green' | 'orange' | 'purple'}/>)}</section>
+    <section className="v3-dashboard-columns">
+      <V2Panel title="Graphique activité" eyebrow="7 derniers jours" className="v3-activity"><V2Bars values={[58,82,46,72,64,90,76,68,84]}/><p className="v2-muted">Volumes réceptions, préparations et expéditions consolidés pour la journée.</p></V2Panel>
+      <V2Panel title="Préparations du jour" eyebrow="Opérations"><div className="v2-account-list">{preparationRows.length ? preparationRows.slice(0,5).map((row, index)=><button key={index}><span>{row[0]}</span><strong>{row[3]}</strong><small>{row[1]}</small></button>) : <p className="v2-empty">Aucune préparation prioritaire.</p>}</div></V2Panel>
+      <V2Panel title="Alertes importantes" eyebrow="Contrôle"><div className="v3-alert-list"><p><AlertTriangle size={17}/> 6 impayés à relancer avant clôture.</p><p><PackageCheck size={17}/> 14 préparations attendent une validation.</p><p><Sparkles size={17}/> Assistant IA prêt : “Prépare les commandes du jour”.</p></div></V2Panel>
     </section>
-    <V2Panel title="Préparations en cours" eyebrow="Operations"><V2Table columns={["Commande", "Client", "Statut", "Priorité"]} rows={preparationRows}/></V2Panel>
+    <V2Panel title="Commandes en cours" eyebrow="Suivi temps réel"><V2Table columns={["Commande", "Client", "Statut", "Score"]} rows={orderRows}/>{!orderRows.length ? <p className="v2-empty">Aucune commande en cours à afficher.</p> : null}</V2Panel>
+    <aside className="v3-ai-dock" aria-label="Assistant IA permanent"><Bot size={18}/><strong>Assistant IA</strong><span>“Trouve 100 vendeurs Shopify”, “Affiche les impayés”, “Créer une facture”…</span><a href="#prospection">Ouvrir</a></aside>
   </div>;
   const logisticsElement = <div className="module-page"><section className="panel"><h3><Warehouse/> Logistique</h3><p>Suivi opérationnel des réceptions, stocks, box, préparations et expéditions. Les connexions Supabase existantes restent inchangées.</p><div className="card-grid"><article className="work-card"><strong>Réceptions</strong><span>126 colis reçus aujourd'hui</span></article><article className="work-card"><strong>Préparations</strong><span>14 dossiers en attente</span></article><article className="work-card"><strong>Expéditions</strong><span>98 colis remis transporteurs</span></article></div></section></div>;
   const accountingElement = <div className="module-page"><section className="panel"><h3><Calculator/> Comptabilité</h3><p>Vue synthétique prête pour factures, impayés, CA et exports comptables.</p><div className="stats-grid"><Stat label="CA du jour" value="2 840 €"/><Stat label="Impayés" value="6 420 €"/><Stat label="Factures à éditer" value="12"/><Stat label="Marge estimée" value="31%"/></div></section></div>;
