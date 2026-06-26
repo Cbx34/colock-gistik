@@ -39,7 +39,7 @@ type ProspectCheckConstraint = { column: string; allowed: string };
 const PROSPECT_CHECK_CONSTRAINTS: Record<string, ProspectCheckConstraint> = {
   prospects_score_check: { column: 'score', allowed: 'integer between 0 and 100' },
   prospects_classement_check: { column: 'classement', allowed: 'ultra-chaud, chaud, moyen, faible' },
-  prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+2, Relance J+5, Client signé, Supprimé' },
+  prospects_statut_contact_check: { column: 'statut_contact', allowed: 'Nouveau, Contacté, Relance J+3, Relance J+7, Client signé, Supprimé' },
   prospects_source_check: { column: 'source', allowed: 'Apify, Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo' },
   prospects_source_reelle_check: { column: 'source_reelle', allowed: 'Shopify, Vinted, TikTok Shop, Etsy, Google Maps, CSV, Démo, Inconnue' },
 };
@@ -261,7 +261,7 @@ export async function saveMessagesAndFollowUpsToSupabase(prospects: Prospect[]) 
     prospect_id: p.id,
     canal: 'email',
     sujet: day === 0 ? `Premier contact ${p.nomBoutique}` : `Relance J+${day} ${p.nomBoutique}`,
-    contenu: generateMessage(p, day as 0 | 2 | 5 | 10),
+    contenu: generateMessage(p, day as 0 | 3 | 7),
     statut: p.lastContactAt && day === 0 ? 'envoye' : 'brouillon',
     scheduled_at: day === 0 ? p.lastContactAt : new Date(new Date(p.lastContactAt ?? p.createdAt).getTime() + day * 86400000).toISOString(),
     sent_at: day === 0 ? p.lastContactAt : null,
@@ -271,7 +271,7 @@ export async function saveMessagesAndFollowUpsToSupabase(prospects: Prospect[]) 
     rang: index + 1,
     due_at: new Date(new Date(p.lastContactAt ?? p.createdAt).getTime() + day * 86400000).toISOString(),
     statut: p.statutContact === `Relance J+${day}` ? 'faite' : 'a_faire',
-    contenu: generateMessage(p, day as 2 | 5 | 10),
+    contenu: generateMessage(p, day as 3 | 7),
   })));
 
   if (messages.length) {
