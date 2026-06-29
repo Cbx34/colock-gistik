@@ -21,7 +21,7 @@ Application React mobile/desktop pour prospecter automatiquement des vendeurs e-
 
 ## Supabase
 
-Renseignez `VITE_SUPABASE_URL` et `VITE_SUPABASE_ANON_KEY` dans l’environnement Vite. Le module Prospection utilise uniquement Supabase pour persister les prospects, campagnes, messages et relances. Si ces variables sont absentes, l’interface affiche une erreur claire et l’indicateur `Supabase non connecté`.
+Renseignez `NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_ANON_KEY` dans l’environnement Next.js. Le module Prospection utilise uniquement Supabase pour persister les prospects, campagnes, messages et relances. Si ces variables sont absentes, l’interface affiche une erreur claire et l’indicateur `Supabase non connecté`.
 
 Le script `supabase/prospecting.sql` crée les tables et la fonction RPC `create_prospecting_schema()`. L’application vérifie les tables au démarrage et appelle cette RPC si le schéma Prospection est absent.
 
