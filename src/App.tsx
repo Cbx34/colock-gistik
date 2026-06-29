@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlertTriangle, Bot, Calculator, Download, ExternalLink, Mail, PackageCheck, Plus, RefreshCw, Search as SearchIcon, ShieldCheck, Trash2, Upload, Rocket, ShoppingBag, BarChart3, Wand2, Warehouse, Truck, Users, LineChart, Euro, PackagePlus, Send, ClipboardCheck, Box, CreditCard, Sparkles, Activity } from 'lucide-react';
 import Layout, { type PageKey } from './components/Layout';
@@ -30,17 +32,17 @@ function ProspectCard({ p, onSelect, onDelete, onContact }: { p: Prospect; onSel
   return <article className="prospect-card"><div><SourceHeader source={p.sourceReelle}/><h3>{p.nomBoutique}</h3><p>{p.typeProduits} · {p.ville}, {p.pays}</p><div className="chips"><Badge tone={p.classement}>{p.classement === 'ultra-chaud' ? '🔥 Ultra chaud' : p.classement === 'chaud' ? '🟢 Chaud' : p.classement === 'moyen' ? '🟡 Moyen' : '⚪ Faible'}</Badge><Badge>{p.plateforme}</Badge><Badge tone={p.shopifyVerified ? 'chaud' : 'neutral'}>{p.shopifyVerified ? '✅ Shopify vérifié' : '❌ Non vérifié'}</Badge>{franceVerified ? <Badge tone="chaud">France vérifiée</Badge> : null}<Badge tone={p.email ? 'chaud' : 'neutral'}>{p.email ? 'Email trouvé' : 'Email absent'}</Badge><Badge>Score Colock Prospect {p.score}/100</Badge>{p.isMonoProduct ? <Badge tone="chaud">Mono-produit</Badge> : null}{p.productCount ? <Badge>{p.productCount} produits</Badge> : null}{p.niche ? <Badge>Niche : {p.niche}</Badge> : null}<Badge>{p.statutContact}</Badge></div></div><ul>{(p.volumeSignaux ?? []).map((signal) => <li key={signal}>{signal}</li>)}{p.siteWeb ? <li><a href={p.siteWeb} target="_blank">Site web</a></li> : null}<ContactLink label="Email" value={p.email}/><ContactLink label="Téléphone" value={p.telephone}/><ContactLink label="WhatsApp" value={p.whatsapp}/><ContactLink label="Instagram" value={p.instagram}/><ContactLink label="Facebook" value={p.facebook}/><ContactLink label="TikTok" value={p.tiktok}/><ContactLink label="LinkedIn" value={p.linkedin}/>{p.sourceUrl ? <li><a href={p.sourceUrl} target="_blank">URL source</a></li> : null}{(p.scoreDetails ?? []).length ? <li><details><summary>Score détaillé</summary><ul className="score-details">{(p.scoreDetails ?? []).map((detail) => <li key={detail}>{detail}</li>)}</ul></details></li> : null}</ul><div className="card-actions"><button onClick={onSelect}>Ouvrir</button>{mailto ? <a className="action-button" href={mailto} onClick={onContact}><Mail size={17}/> Envoyer email</a> : null}<button onClick={onContact}><Mail size={17}/> Contacté</button><button className="secondary danger" onClick={onDelete}><Trash2 size={17}/> Supprimer</button></div></article>;
 }
 export default function App() {
-  const [activePage, setActivePage] = useState<PageKey>(() => (window.location.hash.replace('#', '') as PageKey) || 'dashboard');
+  const [activePage, setActivePage] = useState<PageKey>(() => (typeof window === 'undefined' ? 'dashboard' : (window.location.hash.replace('#', '') as PageKey) || 'dashboard'));
   const [prospects, setProspects] = useState<Prospect[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>(defaultCampaigns);
   const [connection, setConnection] = useState<SupabaseConnectionState>({ connected: false, configured: isSupabaseConfigured, initializing: true, error: '' });
   const [importText, setImportText] = useState('nom_boutique,site_web,email,plateforme,type_produits,ville,signaux\nMa Boutique,https://example.com,contact@example.com,Shopify,cosmétiques,Montpellier,expédition 48h | avis clients');
-  const [apifyActor, setApifyActor] = useState(import.meta.env.VITE_APIFY_ACTOR_ID ?? 'clearpath/shopify-store-leads');
-  const [apifyToken, setApifyToken] = useState(import.meta.env.VITE_APIFY_TOKEN ?? '');
+  const [apifyActor, setApifyActor] = useState(process.env.NEXT_PUBLIC_APIFY_ACTOR_ID ?? 'clearpath/shopify-store-leads');
+  const [apifyToken, setApifyToken] = useState(process.env.NEXT_PUBLIC_APIFY_TOKEN ?? '');
   const [apifyLoading, setApifyLoading] = useState(false);
   const [autoProspecting, setAutoProspecting] = useState(false);
   const [autoQuota, setAutoQuota] = useState<AutoProspectingQuota>(100);
-  const [searchHistory, setSearchHistory] = useState<AutoSearchHistoryEntry[]>(() => { try { return JSON.parse(localStorage.getItem('colock-auto-search-history') || '[]'); } catch { return []; } });
+  const [searchHistory, setSearchHistory] = useState<AutoSearchHistoryEntry[]>(() => { if (typeof window === 'undefined') return []; try { return JSON.parse(window.localStorage.getItem('colock-auto-search-history') || '[]'); } catch { return []; } });
   const [apifyMessages, setApifyMessages] = useState<string[]>(['Prêt. Lancez Apify ou ajoutez des données test visibles.']);
   const [lastApifyCall, setLastApifyCall] = useState('Aucun appel Apify exécuté');
   const [lastError, setLastError] = useState('');
@@ -82,7 +84,7 @@ export default function App() {
   const safeShopifyRawResults = Array.isArray(shopifyRawResults) ? shopifyRawResults : [];
   const quotaReached = (count: number) => autoQuota !== 'illimité' && count >= autoQuota;
 
-  useEffect(() => { const fn = () => setActivePage((window.location.hash.replace('#', '') as PageKey) || 'dashboard'); window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); }, []);
+  useEffect(() => { const fn = () => setActivePage((window.location.hash.replace('#', '') as PageKey) || 'dashboard'); fn(); window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); }, []);
   useEffect(() => {
     if (!isSupabaseConfigured) return;
     supabase.auth.getSession().then(({ data }) => setAuth((current) => ({ ...current, userEmail: data.session?.user.email ?? '' })));
@@ -92,7 +94,7 @@ export default function App() {
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
-      setConnection({ connected: false, configured: false, initializing: false, error: 'Supabase n’est pas configuré : renseignez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY pour utiliser la prospection.' });
+      setConnection({ connected: false, configured: false, initializing: false, error: 'Supabase n’est pas configuré : renseignez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY pour utiliser la prospection.' });
       return;
     }
     loadProspectingData()
@@ -101,7 +103,7 @@ export default function App() {
   }, []);
   useEffect(() => { if (connection.connected) saveProspectsToSupabase(prospects).catch((error: Error) => setConnection((current) => ({ ...current, connected: false, error: error.message }))); }, [connection.connected, prospects]);
   useEffect(() => { if (connection.connected) saveCampaignsToSupabase(campaigns).catch((error: Error) => setConnection((current) => ({ ...current, connected: false, error: error.message }))); }, [campaigns, connection.connected]);
-  useEffect(() => { localStorage.setItem('colock-auto-search-history', JSON.stringify(searchHistory.slice(-500))); }, [searchHistory]);
+  useEffect(() => { window.localStorage.setItem('colock-auto-search-history', JSON.stringify(searchHistory.slice(-500))); }, [searchHistory]);
 
   const metrics = useMemo(() => { const active = prospects.filter((p) => p.statutContact !== 'Supprimé'); const qualified = active.filter((p) => Boolean(p.email || p.telephone || p.hasContactForm)).length; const emails = active.filter((p) => Boolean(p.email)).length; const phones = active.filter((p) => Boolean(p.telephone)).length; const forms = active.filter((p) => Boolean(p.hasContactForm)).length; const instagram = active.filter((p) => Boolean(p.instagram)).length; const facebook = active.filter((p) => Boolean(p.facebook)).length; const tiktok = active.filter((p) => Boolean(p.tiktok)).length; const monoProducts = active.filter((p) => Boolean(p.isMonoProduct)).length; const smallStores = active.filter((p) => Boolean(p.productCount && p.productCount <= 50)).length; const activeStores = active.filter((p) => Boolean(p.activeStore || (!p.inactiveStore && p.hasShippingPage))).length; const internalLogistics = active.filter((p) => Boolean(p.internalLogistics)).length; const ultra = active.filter((p) => p.classement === 'ultra-chaud').length; const contacted = active.filter((p) => ['Contacté','Relance J+3','Relance J+7','Client signé'].includes(p.statutContact)).length; const signed = active.filter((p) => p.statutContact === 'Client signé').length; return { found: active.length, qualified, emails, phones, forms, instagram, facebook, tiktok, monoProducts, smallStores, activeStores, internalLogistics, qualificationRate: active.length ? Math.round((qualified / active.length) * 100) : 0, ultraRate: active.length ? Math.round((ultra / active.length) * 100) : 0, contacted, responseRate: contacted ? Math.round(((active.filter((p) => ['Relance J+3','Relance J+7','Client signé'].includes(p.statutContact)).length) / contacted) * 100) : 0, signed, followups: active.filter((p) => p.nextFollowUpAt && new Date(p.nextFollowUpAt) <= new Date(Date.now() + 10 * 86400000)).length }; }, [prospects]);
   const importProspects = (incoming: Prospect[]) => {

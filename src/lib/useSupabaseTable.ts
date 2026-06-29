@@ -16,7 +16,7 @@ export function useSupabaseTable(table: string, orderBy = 'id', ascending = fals
   const refresh = useCallback(async () => {
     if (!isSupabaseConfigured) {
       setRows([]);
-      setError('Configurez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY pour charger les données Supabase.');
+      setError('Configurez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY pour charger les données Supabase.');
       return;
     }
 

@@ -8,7 +8,7 @@ export type SupabaseConnectionState = {
   error: string;
 };
 
-const schemaError = 'Supabase n’est pas configuré. Ajoutez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY dans l’environnement Vite pour activer le module Prospection.';
+const schemaError = 'Supabase n’est pas configuré. Ajoutez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY dans l’environnement Next.js pour activer le module Prospection.';
 
 const SOURCE_REELLE_DEFAULT: Prospect['sourceReelle'] = 'Google Maps';
 let sourceReelleColumnAvailable = true;

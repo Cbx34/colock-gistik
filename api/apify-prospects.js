@@ -616,8 +616,8 @@ function buildReport(rawCount, normalized, inserted, duplicates, rejected, supab
 }
 
 async function insertProspects(prospects) {
-  const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
-  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
+  const url = readEnv('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL');
+  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
   if (!url || !key) return { added: 0, ignored: 0, errors: ['Variables Supabase serveur manquantes (prospection conservée côté navigateur)'] };
   if (!prospects.length) return { added: 0, ignored: 0 };
   const supabase = createClient(url, key, { auth: { persistSession: false } });
@@ -713,8 +713,8 @@ function dbToProspect(row) {
 }
 
 async function enrichExistingProspects() {
-  const url = readEnv('SUPABASE_URL', 'VITE_SUPABASE_URL');
-  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'VITE_SUPABASE_ANON_KEY');
+  const url = readEnv('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL');
+  const key = readEnv('SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_ANON_KEY', 'NEXT_PUBLIC_SUPABASE_ANON_KEY');
   if (!url || !key) throw new Error('Variables Supabase serveur manquantes pour enrichir les prospects existants');
   const supabase = createClient(url, key, { auth: { persistSession: false } });
   const optionalColumns = await detectOptionalProspectColumns(supabase);
@@ -739,10 +739,10 @@ async function handler(req, res) {
   const body = req.body || {};
   if (body.mode === 'apify-test') {
     const envToken = readEnv('APIFY_TOKEN');
-    const fallbackToken = readEnv('VITE_APIFY_TOKEN');
+    const fallbackToken = readEnv('APIFY_TOKEN', 'NEXT_PUBLIC_APIFY_TOKEN');
     const bodyToken = asString(body.token);
     const token = envToken || fallbackToken || bodyToken;
-    const tokenSource = envToken ? 'APIFY_TOKEN' : fallbackToken ? 'VITE_APIFY_TOKEN' : bodyToken ? 'client' : 'absent';
+    const tokenSource = envToken ? 'APIFY_TOKEN' : fallbackToken ? 'NEXT_PUBLIC_APIFY_TOKEN' : bodyToken ? 'client' : 'absent';
     if (!token) return res.status(401).json({ status: 'missing-token', message: 'Token Apify manquant', tokenSource });
     try {
       const apifyRes = await fetch(`https://api.apify.com/v2/users/me?token=${encodeURIComponent(token)}`);
@@ -770,7 +770,7 @@ async function handler(req, res) {
   const criteria = body.criteria;
   const requestedPlatform = criteria?.platform;
   const actorId = normalizeActorId(DEFAULT_SHOPIFY_ACTOR_ID);
-  const token = readEnv('APIFY_TOKEN', 'VITE_APIFY_TOKEN') || asString(body.token);
+  const token = readEnv('APIFY_TOKEN', 'NEXT_PUBLIC_APIFY_TOKEN') || asString(body.token);
   const maxItems = asNumber(body.maxItems, DEFAULT_MAX_ITEMS);
   const progress = [];
 
