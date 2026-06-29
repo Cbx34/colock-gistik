@@ -1,348 +1,101 @@
+"use client";
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AlertTriangle, Bot, Calculator, Download, ExternalLink, Mail, PackageCheck, Plus, RefreshCw, Search as SearchIcon, ShieldCheck, Trash2, Upload, Rocket, ShoppingBag, BarChart3, Wand2, Warehouse, Truck, Users, LineChart, Euro, PackagePlus, Send, ClipboardCheck, Box, CreditCard, Sparkles, Activity } from 'lucide-react';
+import { BarChart3, Boxes, CheckCircle2, Clock, Download, FileText, MapPin, PackageCheck, PackageOpen, Plus, Search as SearchIcon, Settings, ShieldCheck, ShoppingCart, Truck, Users, Zap } from 'lucide-react';
 import Layout, { type PageKey } from './components/Layout';
 import { V2Bars, V2MetricCard, V2Panel, V2Table } from './components/V2Shell';
-import { buildSearchLinks, defaultCampaigns, ECOMMERCE_KEYWORD_LIBRARY, ECOMMERCE_KEYWORD_QUERIES, QUALIFIED_PROSPECTS_TARGET_PER_CATEGORY, fetchApifyProspects, testApifyConnection, enrichExistingProspects, qualifiedTargetPerKeyword, followUpDays, generateMessage, generateChannelMessages, AUTO_PROSPECTING_COUNTRIES, AUTO_PROSPECTING_QUOTAS, mergeProspects, mockProspectSearch, normalizeProspect, parseCsvProspects, prospectStatuses, scoreProspect, type Campaign, type Platform, type Prospect, type ApifyProgress, type SearchCriteria, type AutoProspectingQuota, type AutoSearchHistoryEntry, type RejectedProspect, isPriorityProspect, COLOCK_PRIORITY_KEYWORDS } from './lib/prospecting';
-import { exportProspectsCsv } from './lib/storage';
-import { isSupabaseConfigured, supabase } from './lib/supabase';
-import { loadProspectingData, saveCampaignsToSupabase, saveProspectsToSupabase, syncProspectsWithSupabase, type SupabaseConnectionState } from './lib/prospectPersistence';
+import { isSupabaseConfigured, supabase, TABLES } from './lib/supabase';
 
-function Stat({ label, value }: { label: string; value: ReactNode }) { return <div className="stat-card"><strong>{value}</strong><span>{label}</span></div>; }
-function Badge({ children, tone = 'neutral' }: { children: ReactNode; tone?: string }) { return <span className={`badge ${tone}`}>{children}</span>; }
+type EntityPage = Exclude<PageKey, 'dashboard' | 'statistiques' | 'settings'>;
+type DemoRow = { id: string; primary: string; secondary: string; status: string; value: string; date: string };
 
-const platforms: Array<SearchCriteria['platform']> = ['Shopify'];
+type ModuleConfig = {
+  key: EntityPage;
+  title: string;
+  subtitle: string;
+  icon: typeof PackageCheck;
+  columns: string[];
+  rows: DemoRow[];
+  tableName: string;
+};
 
-function SourceHeader({ source }: { source: Prospect['sourceReelle'] }) { return <p className="source-header"><strong>Source :</strong> {source}</p>; }
+const modules: Record<EntityPage, ModuleConfig> = {
+  clients: { key: 'clients', title: 'Clients', subtitle: 'Fiches clients, contrats, contacts et priorités opérationnelles.', icon: Users, tableName: TABLES.clients, columns: ['Client', 'Contact / segment', 'Statut', 'CA mensuel', 'Dernière activité'], rows: [
+    { id: 'CLI-001', primary: 'Maison Aura', secondary: 'Lina Martin · cosmétique', status: 'Actif', value: '8 420 €', date: 'Aujourd’hui 09:12' },
+    { id: 'CLI-002', primary: 'Nordic Home', secondary: 'B2C décoration', status: 'Onboarding', value: '3 100 €', date: 'Hier 16:40' },
+    { id: 'CLI-003', primary: 'Velvet Kids', secondary: 'Textile enfant', status: 'Actif', value: '12 900 €', date: '26/06/2026' },
+  ] },
+  receptions: { key: 'receptions', title: 'Réceptions', subtitle: 'Contrôle des arrivages, écarts, photos et mise en stock.', icon: PackageOpen, tableName: TABLES.receptions, columns: ['Réception', 'Fournisseur / client', 'Statut', 'Unités', 'Créneau'], rows: [
+    { id: 'REC-2048', primary: 'Palette bijoux été', secondary: 'Maison Aura · DHL', status: 'Contrôle qualité', value: '842 u.', date: '10:30' },
+    { id: 'REC-2049', primary: 'Cartons textile', secondary: 'Velvet Kids · Geodis', status: 'À scanner', value: '1 260 u.', date: '13:00' },
+    { id: 'REC-2050', primary: 'Accessoires maison', secondary: 'Nordic Home · UPS', status: 'Attendu', value: '420 u.', date: 'Demain' },
+  ] },
+  emplacements: { key: 'emplacements', title: 'Emplacements', subtitle: 'Cartographie dynamique des allées, racks, bacs et zones tampon.', icon: MapPin, tableName: TABLES.emplacements, columns: ['Emplacement', 'Zone', 'Statut', 'Occupation', 'Dernier mouvement'], rows: [
+    { id: 'A-01-03', primary: 'Rack A-01-03', secondary: 'Zone picking rapide', status: 'Disponible', value: '62%', date: '09:52' },
+    { id: 'B-12-02', primary: 'Bac B-12-02', secondary: 'Petites pièces', status: 'Complet', value: '98%', date: '08:15' },
+    { id: 'Q-RET-01', primary: 'Quarantaine retours', secondary: 'Contrôle litige', status: 'Bloqué', value: '41%', date: 'Hier' },
+  ] },
+  stock: { key: 'stock', title: 'Stock', subtitle: 'Inventaire par SKU, seuils d’alerte et traçabilité prête Supabase.', icon: Boxes, tableName: TABLES.produits, columns: ['SKU', 'Produit', 'Statut', 'Quantité', 'MAJ'], rows: [
+    { id: 'SKU-BIJ-882', primary: 'Bracelet doré', secondary: 'Maison Aura', status: 'OK', value: '1 842', date: 'Instantané' },
+    { id: 'SKU-TEX-117', primary: 'Sweat enfant bleu', secondary: 'Velvet Kids', status: 'Réassort', value: '42', date: '11:02' },
+    { id: 'SKU-HOM-330', primary: 'Bougie céramique', secondary: 'Nordic Home', status: 'Alerte', value: '8', date: '10:18' },
+  ] },
+  commandes: { key: 'commandes', title: 'Commandes', subtitle: 'Préparation, picking, packing et contrôle avant expédition.', icon: ShoppingCart, tableName: TABLES.commandes, columns: ['Commande', 'Client / canal', 'Statut', 'Articles', 'SLA'], rows: [
+    { id: 'CMD-54321', primary: '#54321', secondary: 'Maison Aura · Shopify', status: 'Picking', value: '3 articles', date: 'J+0 15:00' },
+    { id: 'CMD-54322', primary: '#54322', secondary: 'Velvet Kids · Woo', status: 'Packing', value: '1 article', date: 'J+0 16:00' },
+    { id: 'CMD-54323', primary: '#54323', secondary: 'Nordic Home · B2B', status: 'Prioritaire', value: '12 articles', date: 'J+0 12:30' },
+  ] },
+  expeditions: { key: 'expeditions', title: 'Expéditions', subtitle: 'Remise transporteurs, étiquettes, tracking et SLA.', icon: Truck, tableName: TABLES.expeditions, columns: ['Expédition', 'Transporteur', 'Statut', 'Colis', 'Départ'], rows: [
+    { id: 'EXP-8801', primary: 'Vague matin', secondary: 'Colissimo', status: 'Remis', value: '48 colis', date: '11:45' },
+    { id: 'EXP-8802', primary: 'Vague relais', secondary: 'Mondial Relay', status: 'Étiquettes prêtes', value: '31 colis', date: '16:30' },
+    { id: 'EXP-8803', primary: 'Express', secondary: 'Chronopost', status: 'À clôturer', value: '12 colis', date: '17:15' },
+  ] },
+  factures: { key: 'factures', title: 'Factures', subtitle: 'Facturation logistique, stockage, préparation et impayés.', icon: FileText, tableName: TABLES.factures, columns: ['Facture', 'Client', 'Statut', 'Montant', 'Échéance'], rows: [
+    { id: 'FAC-2026-061', primary: 'FAC-2026-061', secondary: 'Maison Aura', status: 'Payée', value: '4 820 €', date: '25/06/2026' },
+    { id: 'FAC-2026-062', primary: 'FAC-2026-062', secondary: 'Velvet Kids', status: 'À envoyer', value: '2 340 €', date: '30/06/2026' },
+    { id: 'FAC-2026-063', primary: 'FAC-2026-063', secondary: 'Nordic Home', status: 'Impayée', value: '1 260 €', date: '20/06/2026' },
+  ] },
+};
 
-function ContactLink({ label, value }: { label: string; value?: string }) {
-  if (!value) return null;
-  const href = label === 'Email' ? `mailto:${value}` : /^https?:\/\//i.test(value) ? value : undefined;
-  return <li><strong>{label} :</strong> {href ? <a href={href} target={label === 'Email' ? undefined : '_blank'}>{value}</a> : value}</li>;
+function Toolbar({ search, setSearch, onNew }: { search: string; setSearch: (value: string) => void; onNew: () => void }) {
+  return <div className="cg-toolbar"><label><SearchIcon size={19}/><input placeholder="Rechercher dans cette page…" value={search} onChange={(event)=>setSearch(event.target.value)}/></label><button onClick={onNew}><Plus size={21}/> Nouveau</button></div>;
 }
 
-function isFranceVerified(p: Prospect) {
-  return p.pays.toLowerCase() === 'france' && (p.volumeSignaux ?? []).some((signal) => /France vérifiée|mentions légales françaises|téléphone \+33|adresse France/i.test(signal));
+function ModulePage({ config }: { config: ModuleConfig }) {
+  const [search, setSearch] = useState('');
+  const [created, setCreated] = useState(0);
+  const rows = useMemo(() => {
+    const allRows = created ? [{ id: `NEW-${created}`, primary: 'Nouvel enregistrement', secondary: 'Créé localement · prêt Supabase', status: 'Brouillon', value: '—', date: 'Maintenant' }, ...config.rows] : config.rows;
+    const needle = search.toLowerCase();
+    return allRows.filter((row) => !needle || Object.values(row).join(' ').toLowerCase().includes(needle));
+  }, [config.rows, created, search]);
+  return <div className="module-page cg-page"><Toolbar search={search} setSearch={setSearch} onNew={()=>setCreated((value)=>value+1)}/><section className="cg-module-hero"><config.icon size={30}/><div><strong>{config.tableName}</strong><p>Module fonctionnel avec état local instantané, données de démonstration et mapping Supabase documenté.</p></div></section><V2Panel title={config.title} eyebrow="Données opérationnelles"><V2Table columns={config.columns} rows={rows.map((row)=>[<strong>{row.primary}</strong>, row.secondary, <span className="v2-tag">{row.status}</span>, <em>{row.value}</em>, row.date])}/></V2Panel></div>;
 }
 
-function ProspectCard({ p, onSelect, onDelete, onContact }: { p: Prospect; onSelect: () => void; onDelete: () => void; onContact: () => void }) {
-  const franceVerified = isFranceVerified(p);
-  const mailto = p.email ? `mailto:${p.email}?subject=${encodeURIComponent(`Proposition logistique pour ${p.nomBoutique}`)}&body=${encodeURIComponent(generateMessage(p))}` : undefined;
-  return <article className="prospect-card"><div><SourceHeader source={p.sourceReelle}/><h3>{p.nomBoutique}</h3><p>{p.typeProduits} · {p.ville}, {p.pays}</p><div className="chips"><Badge tone={p.classement}>{p.classement === 'ultra-chaud' ? '🔥 Ultra chaud' : p.classement === 'chaud' ? '🟢 Chaud' : p.classement === 'moyen' ? '🟡 Moyen' : '⚪ Faible'}</Badge><Badge>{p.plateforme}</Badge><Badge tone={p.shopifyVerified ? 'chaud' : 'neutral'}>{p.shopifyVerified ? '✅ Shopify vérifié' : '❌ Non vérifié'}</Badge>{franceVerified ? <Badge tone="chaud">France vérifiée</Badge> : null}<Badge tone={p.email ? 'chaud' : 'neutral'}>{p.email ? 'Email trouvé' : 'Email absent'}</Badge><Badge>Score Colock Prospect {p.score}/100</Badge>{p.isMonoProduct ? <Badge tone="chaud">Mono-produit</Badge> : null}{p.productCount ? <Badge>{p.productCount} produits</Badge> : null}{p.niche ? <Badge>Niche : {p.niche}</Badge> : null}<Badge>{p.statutContact}</Badge></div></div><ul>{(p.volumeSignaux ?? []).map((signal) => <li key={signal}>{signal}</li>)}{p.siteWeb ? <li><a href={p.siteWeb} target="_blank">Site web</a></li> : null}<ContactLink label="Email" value={p.email}/><ContactLink label="Téléphone" value={p.telephone}/><ContactLink label="WhatsApp" value={p.whatsapp}/><ContactLink label="Instagram" value={p.instagram}/><ContactLink label="Facebook" value={p.facebook}/><ContactLink label="TikTok" value={p.tiktok}/><ContactLink label="LinkedIn" value={p.linkedin}/>{p.sourceUrl ? <li><a href={p.sourceUrl} target="_blank">URL source</a></li> : null}{(p.scoreDetails ?? []).length ? <li><details><summary>Score détaillé</summary><ul className="score-details">{(p.scoreDetails ?? []).map((detail) => <li key={detail}>{detail}</li>)}</ul></details></li> : null}</ul><div className="card-actions"><button onClick={onSelect}>Ouvrir</button>{mailto ? <a className="action-button" href={mailto} onClick={onContact}><Mail size={17}/> Envoyer email</a> : null}<button onClick={onContact}><Mail size={17}/> Contacté</button><button className="secondary danger" onClick={onDelete}><Trash2 size={17}/> Supprimer</button></div></article>;
-}
 export default function App() {
-  const [activePage, setActivePage] = useState<PageKey>(() => (window.location.hash.replace('#', '') as PageKey) || 'dashboard');
-  const [prospects, setProspects] = useState<Prospect[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>(defaultCampaigns);
-  const [connection, setConnection] = useState<SupabaseConnectionState>({ connected: false, configured: isSupabaseConfigured, initializing: true, error: '' });
-  const [importText, setImportText] = useState('nom_boutique,site_web,email,plateforme,type_produits,ville,signaux\nMa Boutique,https://example.com,contact@example.com,Shopify,cosmétiques,Montpellier,expédition 48h | avis clients');
-  const [apifyActor, setApifyActor] = useState(import.meta.env.VITE_APIFY_ACTOR_ID ?? 'clearpath/shopify-store-leads');
-  const [apifyToken, setApifyToken] = useState(import.meta.env.VITE_APIFY_TOKEN ?? '');
-  const [apifyLoading, setApifyLoading] = useState(false);
-  const [autoProspecting, setAutoProspecting] = useState(false);
-  const [autoQuota, setAutoQuota] = useState<AutoProspectingQuota>(100);
-  const [searchHistory, setSearchHistory] = useState<AutoSearchHistoryEntry[]>(() => { try { return JSON.parse(localStorage.getItem('colock-auto-search-history') || '[]'); } catch { return []; } });
-  const [apifyMessages, setApifyMessages] = useState<string[]>(['Prêt. Lancez Apify ou ajoutez des données test visibles.']);
-  const [lastApifyCall, setLastApifyCall] = useState('Aucun appel Apify exécuté');
-  const [lastError, setLastError] = useState('');
-  const [lastProspectsRetrieved, setLastProspectsRetrieved] = useState(0);
-  const [lastProspectsSaved, setLastProspectsSaved] = useState(0);
-  const [apifyConnected, setApifyConnected] = useState(false);
-  const [actionMessage, setActionMessage] = useState('');
-  const [shopifyRawResults, setShopifyRawResults] = useState<Record<string, unknown>[]>([]);
-  const [rejectedProspects, setRejectedProspects] = useState<RejectedProspect[]>([]);
-  const [selectedId, setSelectedId] = useState<string>('');
+  const [activePage, setActivePage] = useState<PageKey>(() => (typeof window === 'undefined' ? 'dashboard' : (window.location.hash.replace('#', '') as PageKey) || 'dashboard'));
   const [globalSearch, setGlobalSearch] = useState('');
-  const [newProspect, setNewProspect] = useState({ nomBoutique: '', siteWeb: '', email: '', telephone: '', plateforme: 'Shopify' as Platform, typeProduits: '', ville: 'France', pays: 'France' });
   const [auth, setAuth] = useState({ email: '', password: '', userEmail: '', loading: false, message: '' });
-  const [filters, setFilters] = useState({ emailOnly: false, phoneOnly: false, franceOnly: false, monoOnly: false, shopifyOnly: false, score40: false, score65: false, score85: false, instagramOnly: false, facebookOnly: false, tiktokOnly: false });
-  const setFilter = (key: keyof typeof filters, value: boolean) => setFilters((current) => ({ ...current, [key]: value }));
-  const globalSearchText = globalSearch.trim().toLowerCase();
-  const matchesGlobalSearch = (p: Prospect) => !globalSearchText || [p.nomBoutique, p.siteWeb, p.email, p.telephone, p.plateforme, p.typeProduits, p.ville, p.pays, p.sourceReelle, p.statutContact, p.notes].filter(Boolean).join(' ').toLowerCase().includes(globalSearchText);
-  const visibleProspects = prospects.filter((p) => p.statutContact !== 'Supprimé'
-    && matchesGlobalSearch(p)
-    && (!filters.emailOnly || Boolean(p.email))
-    && (!filters.phoneOnly || Boolean(p.telephone))
-    && (!filters.franceOnly || p.pays.toLowerCase() === 'france')
-    && (!filters.monoOnly || Boolean(p.isMonoProduct))
-    && (!filters.shopifyOnly || Boolean(p.shopifyVerified))
-    && (!filters.score40 || p.score > 40)
-    && (!filters.score65 || p.score > 65)
-    && (!filters.score85 || p.score > 85)
-    && (!filters.instagramOnly || Boolean(p.instagram))
-    && (!filters.facebookOnly || Boolean(p.facebook))
-    && (!filters.tiktokOnly || Boolean(p.tiktok)));
-  const priorityProspects = prospects.filter((p) => p.statutContact !== 'Supprimé' && isPriorityProspect(p));
-  const selected = prospects.find((p) => p.id === selectedId) ?? visibleProspects[0] ?? prospects[0];
-  const [criteria, setCriteria] = useState<SearchCriteria>({ platform: 'Shopify', productType: '', location: 'France', keywords: 'bijoux France' });
-  const safeProspects = Array.isArray(prospects) ? prospects : [];
-  const safeCampaigns = Array.isArray(campaigns) ? campaigns : [];
-  const safeApifyMessages = Array.isArray(apifyMessages) ? apifyMessages : [];
-  const safeSearchHistory = Array.isArray(searchHistory) ? searchHistory : [];
-  const safeRejectedProspects = Array.isArray(rejectedProspects) ? rejectedProspects : [];
-  const safeShopifyRawResults = Array.isArray(shopifyRawResults) ? shopifyRawResults : [];
-  const quotaReached = (count: number) => autoQuota !== 'illimité' && count >= autoQuota;
-
   useEffect(() => { const fn = () => setActivePage((window.location.hash.replace('#', '') as PageKey) || 'dashboard'); window.addEventListener('hashchange', fn); return () => window.removeEventListener('hashchange', fn); }, []);
-  useEffect(() => {
-    if (!isSupabaseConfigured) return;
-    supabase.auth.getSession().then(({ data }) => setAuth((current) => ({ ...current, userEmail: data.session?.user.email ?? '' })));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setAuth((current) => ({ ...current, userEmail: session?.user.email ?? '' })));
-    return () => listener.subscription.unsubscribe();
-  }, []);
+  useEffect(() => { if (!isSupabaseConfigured) return; supabase.auth.getSession().then(({ data }) => setAuth((current) => ({ ...current, userEmail: data.session?.user.email ?? '' }))); const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => setAuth((current) => ({ ...current, userEmail: session?.user.email ?? '' }))); return () => listener.subscription.unsubscribe(); }, []);
+  const signIn = async () => { if (!isSupabaseConfigured) { setAuth((current) => ({ ...current, message: 'Supabase non configuré : ajoutez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.' })); return; } setAuth((current) => ({ ...current, loading: true, message: '' })); const { error } = await supabase.auth.signInWithPassword({ email: auth.email, password: auth.password }); setAuth((current) => ({ ...current, loading: false, message: error ? error.message : 'Connexion réussie.' })); };
+  const signOut = async () => { if (!isSupabaseConfigured) return; const { error } = await supabase.auth.signOut(); setAuth((current) => ({ ...current, userEmail: '', message: error ? error.message : 'Session fermée.' })); };
 
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setConnection({ connected: false, configured: false, initializing: false, error: 'Supabase n’est pas configuré : renseignez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY pour utiliser la prospection.' });
-      return;
-    }
-    loadProspectingData()
-      .then((data) => { setProspects(data.prospects); setCampaigns(data.campaigns); setConnection({ connected: true, configured: true, initializing: false, error: '' }); })
-      .catch((error: Error) => setConnection({ connected: false, configured: true, initializing: false, error: error.message }));
-  }, []);
-  useEffect(() => { if (connection.connected) saveProspectsToSupabase(prospects).catch((error: Error) => setConnection((current) => ({ ...current, connected: false, error: error.message }))); }, [connection.connected, prospects]);
-  useEffect(() => { if (connection.connected) saveCampaignsToSupabase(campaigns).catch((error: Error) => setConnection((current) => ({ ...current, connected: false, error: error.message }))); }, [campaigns, connection.connected]);
-  useEffect(() => { localStorage.setItem('colock-auto-search-history', JSON.stringify(searchHistory.slice(-500))); }, [searchHistory]);
-
-  const metrics = useMemo(() => { const active = prospects.filter((p) => p.statutContact !== 'Supprimé'); const qualified = active.filter((p) => Boolean(p.email || p.telephone || p.hasContactForm)).length; const emails = active.filter((p) => Boolean(p.email)).length; const phones = active.filter((p) => Boolean(p.telephone)).length; const forms = active.filter((p) => Boolean(p.hasContactForm)).length; const instagram = active.filter((p) => Boolean(p.instagram)).length; const facebook = active.filter((p) => Boolean(p.facebook)).length; const tiktok = active.filter((p) => Boolean(p.tiktok)).length; const monoProducts = active.filter((p) => Boolean(p.isMonoProduct)).length; const smallStores = active.filter((p) => Boolean(p.productCount && p.productCount <= 50)).length; const activeStores = active.filter((p) => Boolean(p.activeStore || (!p.inactiveStore && p.hasShippingPage))).length; const internalLogistics = active.filter((p) => Boolean(p.internalLogistics)).length; const ultra = active.filter((p) => p.classement === 'ultra-chaud').length; const contacted = active.filter((p) => ['Contacté','Relance J+3','Relance J+7','Client signé'].includes(p.statutContact)).length; const signed = active.filter((p) => p.statutContact === 'Client signé').length; return { found: active.length, qualified, emails, phones, forms, instagram, facebook, tiktok, monoProducts, smallStores, activeStores, internalLogistics, qualificationRate: active.length ? Math.round((qualified / active.length) * 100) : 0, ultraRate: active.length ? Math.round((ultra / active.length) * 100) : 0, contacted, responseRate: contacted ? Math.round(((active.filter((p) => ['Relance J+3','Relance J+7','Client signé'].includes(p.statutContact)).length) / contacted) * 100) : 0, signed, followups: active.filter((p) => p.nextFollowUpAt && new Date(p.nextFollowUpAt) <= new Date(Date.now() + 10 * 86400000)).length }; }, [prospects]);
-  const importProspects = (incoming: Prospect[]) => {
-    let result = { added: 0, merged: 0, prospects: [] as Prospect[] };
-    setProspects((current) => { result = mergeProspects(current, incoming); return result.prospects; });
-    return result;
-  };
-  const formatImportSummary = (added: number, ignored: number) => `${added} nouveaux prospects ajoutés, ${ignored} doublons ignorés`;
-  const addProspects = () => { const result = importProspects(mockProspectSearch(criteria)); setApifyMessages([formatImportSummary(result.added, result.merged)]); };
-  const importCsv = (source: 'CSV' | 'Shopify' | 'Vinted' | 'TikTok Shop' | 'Etsy' | 'Instagram' | 'Google') => { const result = importProspects(parseCsvProspects(importText, source)); setApifyMessages([formatImportSummary(result.added, result.merged)]); };
-  const addApifyMessage = (message: string) => setApifyMessages((current) => [...current, message]);
-  const notConnected = () => setActionMessage('Action disponible dès que les données opérationnelles Supabase sont connectées.');
-  const resolveSourceForCreation = (platform: Platform): Prospect['sourceReelle'] => platform === 'Shopify' || platform === 'Vinted' || platform === 'TikTok Shop' || platform === 'Etsy' ? platform : 'Inconnue';
-  const signIn = async () => {
-    if (!isSupabaseConfigured) { setAuth((current) => ({ ...current, message: 'Supabase non configuré.' })); return; }
-    setAuth((current) => ({ ...current, loading: true, message: '' }));
-    const { error } = await supabase.auth.signInWithPassword({ email: auth.email, password: auth.password });
-    setAuth((current) => ({ ...current, loading: false, message: error ? error.message : 'Authentification réussie.' }));
-  };
-  const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    setAuth((current) => ({ ...current, message: error ? error.message : 'Session fermée.' }));
-  };
-  const createProspect = () => {
-    if (!newProspect.nomBoutique.trim()) { setActionMessage('Nom de boutique obligatoire pour créer un prospect.'); return; }
-    const created = normalizeProspect({ nomBoutique: newProspect.nomBoutique, siteWeb: newProspect.siteWeb, email: newProspect.email, telephone: newProspect.telephone, plateforme: newProspect.plateforme, typeProduits: newProspect.typeProduits, ville: newProspect.ville, pays: newProspect.pays, sourceReelle: resolveSourceForCreation(newProspect.plateforme), sourceUrl: newProspect.siteWeb, shopifyVerified: newProspect.plateforme === 'Shopify', notes: 'Création manuelle' }, 'CSV');
-    const result = importProspects([created]);
-    setSelectedId(created.id);
-    setActionMessage(result.added ? `Prospect créé : ${created.nomBoutique}` : `Prospect fusionné : ${created.nomBoutique}`);
-    window.location.hash = 'prospect';
-  };
-  const connectApifyAndRunShopifyTest = async () => {
-    setApifyMessages(['Test connexion Apify…']);
-    setApifyLoading(true);
-    try {
-      const connectionResult = await testApifyConnection(apifyToken);
-      setApifyConnected(connectionResult.status === 'connected');
-      setLastApifyCall(new Date().toISOString());
-      setApifyMessages([connectionResult.message, connectionResult.tokenSource ? `Token vérifié depuis : ${connectionResult.tokenSource}` : '', connectionResult.actorStatus ? `Acteur : ${connectionResult.actorStatus}` : ''].filter(Boolean));
-      if (connectionResult.status !== 'connected') { setLastError(connectionResult.message); return; }
-      const testCriteria: SearchCriteria = { platform: 'Shopify', productType: 'bijoux', location: 'France', keywords: 'bijoux France' };
-      setCriteria(testCriteria);
-      await runApify(testCriteria, true);
-    } finally {
-      setApifyLoading(false);
-    }
-  };
-  const runApify = async (forcedCriteria = criteria, skipConnectionCheck = false) => {
-    setApifyMessages(skipConnectionCheck ? ['Apify connecté ✅', 'Test Shopify bijoux France en cours…'] : ['Recherche en cours…']);
-    setApifyLoading(true);
-    try {
-      if (!skipConnectionCheck) {
-        const connectionResult = await testApifyConnection(apifyToken);
-        setApifyConnected(connectionResult.status === 'connected');
-        addApifyMessage(connectionResult.message);
-        if (connectionResult.status !== 'connected') { setLastError(connectionResult.message); return; }
-      }
-      setLastApifyCall(new Date().toISOString());
-      const result = await fetchApifyProspects(apifyActor, apifyToken, forcedCriteria, undefined, (progress: ApifyProgress) => addApifyMessage(progress.message));
-      console.log('[runApify] Réponse brute recherche Shopify', result);
-      const safeProspects = Array.isArray(result.prospects) ? result.prospects : [];
-      const safeRawItems = Array.isArray(result.rawItems) ? result.rawItems : [];
-      setShopifyRawResults(safeRawItems);
-      setRejectedProspects(Array.isArray(result.rejectedProspects) ? result.rejectedProspects : []);
-      setLastProspectsRetrieved(safeProspects.length);
-      addApifyMessage(safeProspects.length ? `${safeProspects.length} prospects trouvés.` : 'Aucun prospect trouvé.');
-      if (result.report) addApifyMessage(`Rapport détaillé : ${result.report.rawCount} bruts Apify · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
-      if (typeof result.insertedCount === 'number') addApifyMessage(`${result.insertedCount} prospects insérés exactement dans Supabase`);
-      if (connection.connected) {
-        try {
-          const refreshed = await syncProspectsWithSupabase(safeProspects);
-          setProspects(refreshed);
-          setLastProspectsSaved(safeProspects.length);
-        } catch (error) {
-          const merged = mergeProspects(prospects, safeProspects);
-          setProspects(merged.prospects);
-          addApifyMessage(`Erreur Supabase non bloquante : ${error instanceof Error ? error.message : 'synchronisation impossible'}`);
-        }
-      } else {
-        const merged = mergeProspects(prospects, safeProspects);
-        setProspects(merged.prospects);
-        setLastProspectsSaved(merged.added);
-        addApifyMessage(formatImportSummary(merged.added, merged.merged));
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erreur Apify inconnue';
-      console.error('[runApify] Erreur de connexion Apify', error);
-      setLastError(message);
-      addApifyMessage(`Erreur réseau ❌ ${message}`);
-    } finally {
-      setApifyLoading(false);
-    }
-  };
-  const enrichProspects = async () => {
-    setApifyMessages(['Enrichissement des prospects existants lancé : réanalyse des sites sans nouvelle recherche Shopify.']);
-    setApifyLoading(true);
-    try {
-      const result = await enrichExistingProspects((progress) => addApifyMessage(progress.message));
-      if (connection.connected) setProspects(await syncProspectsWithSupabase(result.prospects));
-      else setProspects((current) => mergeProspects(current, result.prospects).prospects);
-      addApifyMessage(`${result.prospects.length} prospects réanalysés, ${result.insertedCount ?? 0} enrichis.`);
-    } catch (error) {
-      addApifyMessage(`Erreur enrichissement : ${error instanceof Error ? error.message : 'erreur inconnue'}`);
-    } finally {
-      setApifyLoading(false);
-    }
-  };
-  const runAutoProspecting = async () => {
-    if (!apifyConnected) { setApifyMessages(['Token manquant ❌', 'Connectez Apify avant de lancer Shopify.']); return; }
-    const targetLabel = autoQuota === 'illimité' ? 'illimité' : `${autoQuota}`;
-    setApifyMessages([`Agent IA autonome lancé : quota ${targetLabel}, pays ${AUTO_PROSPECTING_COUNTRIES.join(' → ')}, doublons et recherches déjà effectuées ignorés.`]);
-    setAutoProspecting(true);
-    setApifyLoading(true);
-    let qualifiedTotal = prospects.filter((p) => p.statutContact !== 'Supprimé').length;
-    const alreadySearched = new Set(searchHistory.map((entry) => `${entry.country}|${entry.keyword}`.toLowerCase()));
-    try {
-      for (const country of AUTO_PROSPECTING_COUNTRIES) {
-        if (quotaReached(qualifiedTotal)) break;
-        const autoKeywordGroups = [{ category: 'PRIORITÉS COLOCK-GISTIK', keywords: COLOCK_PRIORITY_KEYWORDS }, ...ECOMMERCE_KEYWORD_LIBRARY];
-        for (const group of autoKeywordGroups) {
-          if (quotaReached(qualifiedTotal)) break;
-          for (const keyword of group.keywords) {
-            if (quotaReached(qualifiedTotal)) break;
-            const historyKey = `${country}|${keyword}`.toLowerCase();
-            if (alreadySearched.has(historyKey)) {
-              addApifyMessage(`↷ Recherche déjà mémorisée ignorée : ${keyword} · ${country}`);
-              continue;
-            }
-            const remaining = autoQuota === 'illimité' ? 50 : Math.max(1, autoQuota - qualifiedTotal);
-            const batchSize = Math.min(50, remaining);
-            const autoCriteria: SearchCriteria = { platform: 'Shopify', productType: keyword, location: country, keywords: `${keyword} Shopify ${country}` };
-            addApifyMessage(`▶ ${group.category}/${keyword} · ${country} — lot ${batchSize}, progression ${qualifiedTotal}/${targetLabel}`);
-            let result;
-            try {
-              result = await fetchApifyProspects(apifyActor, apifyToken, autoCriteria, batchSize, (progress: ApifyProgress) => addApifyMessage(`${country}/${keyword} : ${progress.message}`));
-            } catch (error) {
-              addApifyMessage(`⚠ ${keyword} · ${country} ignoré après erreur : ${error instanceof Error ? error.message : 'erreur inconnue'}`);
-              continue;
-            }
-            setShopifyRawResults(result.rawItems ?? []);
-            setRejectedProspects((current) => [...current, ...(result.rejectedProspects ?? [])].slice(-1000));
-            if (result.report) addApifyMessage(`Rapport ${keyword} : ${result.report.rawCount} bruts · ${result.report.normalizedCount} normalisés · ${result.report.insertedCount} insérés · ${result.report.duplicateCount} doublons · ${result.report.rejectedCount} rejetés (${Object.entries(result.report.rejectionReasons ?? {}).map(([reason, count]) => `${reason}: ${count}`).join(', ') || 'aucun rejet'})`);
-            if (connection.connected) {
-              try { setProspects(await syncProspectsWithSupabase(result.prospects)); }
-              catch (error) { setProspects((current) => mergeProspects(current, result.prospects).prospects); addApifyMessage(`Erreur Supabase non bloquante : ${error instanceof Error ? error.message : 'synchronisation impossible'}`); }
-            } else setProspects((current) => mergeProspects(current, result.prospects).prospects);
-            const insertedCount = result.insertedCount ?? result.prospects.length;
-            const entry: AutoSearchHistoryEntry = { id: crypto.randomUUID(), country, niche: group.category, keyword, query: result.query || autoCriteria.keywords, searchedAt: new Date().toISOString(), insertedCount, duplicateCount: result.duplicateCount ?? 0, qualifiedCount: result.prospects.length };
-            alreadySearched.add(historyKey);
-            setSearchHistory((current) => [...current, entry]);
-            qualifiedTotal += insertedCount;
-            addApifyMessage(`✓ ${keyword} · ${country} : ${insertedCount} enregistrés, ${result.duplicateCount ?? 0} doublons, progression ${qualifiedTotal}/${targetLabel}.`);
-          }
-        }
-      }
-      addApifyMessage(quotaReached(qualifiedTotal) ? `Quota atteint : ${qualifiedTotal}/${targetLabel} prospects.` : `Agent terminé : bibliothèque épuisée avec ${qualifiedTotal}/${targetLabel} prospects.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erreur Apify inconnue';
-      addApifyMessage(`Erreur prospection automatique : ${message}`);
-    } finally {
-      setAutoProspecting(false);
-      setApifyLoading(false);
-    }
-  };
-  const select = (id: string) => { setSelectedId(id); window.location.hash = 'prospect'; };
-  const markContacted = (id: string) => setProspects((list) => list.map((p) => p.id === id ? { ...p, statutContact: 'Contacté', lastContactAt: new Date().toISOString(), nextFollowUpAt: new Date(Date.now() + 3 * 86400000).toISOString() } : p));
-  const deleteProspect = (id: string) => setProspects((list) => list.map((p) => p.id === id ? { ...p, statutContact: 'Supprimé', notes: `${p.notes ?? ''}\nSuppression demandée / opt-out.` } : p));
-  const updateSelected = (patch: Partial<Prospect>) => selected && setProspects((list) => list.map((p) => p.id === selected.id ? { ...p, ...patch, ...scoreProspect({ ...p, ...patch }) } : p));
-
-
-  const activeProspects = prospects.filter((p) => p.statutContact !== 'Supprimé');
-  const hotProspects = activeProspects.filter((p) => p.classement === 'ultra-chaud' || p.classement === 'chaud');
-  const dashboardKpis = [
-    ['CA du jour', '2 840 €', '+12% vs hier', Euro, 'orange'],
-    ['Colis reçus', '126', '+18 entrants', PackagePlus, 'green'],
-    ['Colis expédiés', '98', 'SLA 96%', Send, 'orange'],
-    ['Préparations', '14', 'à traiter', ClipboardCheck, 'purple'],
-    ['Box libres', '32', 'capacité OK', Box, 'green'],
-    ['Impayés', '6 420 €', '6 factures', CreditCard, 'orange'],
-  ] as const;
-  const preparationRows = activeProspects.slice(0, 6).map((p, i) => [
-    <strong>PREP-{String(i + 1248).padStart(4, '0')}</strong>,
-    p.nomBoutique,
-    <span className="v2-tag">Picking & packing</span>,
-    <em>{p.classement}</em>,
-  ]);
-  const orderRows = (activeProspects.length ? activeProspects : visibleProspects).slice(0, 7).map((p, i) => [
-    <strong>CMD-{String(i + 4312).padStart(5, '0')}</strong>,
-    p.nomBoutique,
-    <span className="v2-tag">En préparation</span>,
-    <em>{p.score}/100</em>,
-  ]);
-  const quickActions = [
-    ['Nouvelle réception', '#logistique', PackagePlus],
-    ['Nouvelle préparation', '#logistique', ClipboardCheck],
-    ['Nouvelle expédition', '#transporteurs', Send],
-    ['Nouveau prospect', '#search', Bot],
-    ['Ajouter client', '#clients', Users],
-  ] as const;
-  const dashboardElement = <div className="v2-page v3-dashboard">
-    <section className="v3-quick-actions" aria-label="Boutons rapides">
-      {quickActions.map(([label, href, Icon]) => <a href={href} key={label}><Icon size={17}/>{label}</a>)}
-    </section>
-    <section className="v2-metric-grid v3-kpi-row">{dashboardKpis.map(([label,value,delta,Icon,tone])=><V2MetricCard key={label} label={label} value={value} delta={delta} icon={Icon} tone={tone as 'green' | 'orange' | 'purple'}/>)}</section>
-    <section className="v3-dashboard-columns">
-      <V2Panel title="Graphique activité" eyebrow="7 derniers jours" className="v3-activity"><V2Bars values={[58,82,46,72,64,90,76,68,84]}/><p className="v2-muted">Volumes réceptions, préparations et expéditions consolidés pour la journée.</p></V2Panel>
-      <V2Panel title="Préparations du jour" eyebrow="Opérations"><div className="v2-account-list">{preparationRows.length ? preparationRows.slice(0,5).map((row, index)=><button key={index} type="button" onClick={notConnected}><span>{row[0]}</span><strong>{row[3]}</strong><small>{row[1]}</small></button>) : <p className="v2-empty">Aucune préparation prioritaire.</p>}</div></V2Panel>
-      <V2Panel title="Alertes importantes" eyebrow="Contrôle"><div className="v3-alert-list"><p><AlertTriangle size={17}/> 6 impayés à relancer avant clôture.</p><p><PackageCheck size={17}/> 14 préparations attendent une validation.</p><p><Sparkles size={17}/> Assistant IA prêt : “Prépare les commandes du jour”.</p></div></V2Panel>
-    </section>
-    <V2Panel title="Commandes en cours" eyebrow="Suivi temps réel"><V2Table columns={["Commande", "Client", "Statut", "Score"]} rows={orderRows}/>{!orderRows.length ? <p className="v2-empty">Aucune commande en cours à afficher.</p> : null}</V2Panel>
-    <aside className="v3-ai-dock" aria-label="Assistant IA permanent"><Bot size={18}/><strong>Assistant IA</strong><span>“Trouve 100 vendeurs Shopify”, “Affiche les impayés”, “Créer une facture”…</span><a href="#prospection">Ouvrir</a></aside>
-  </div>;
-  const logisticsElement = <div className="module-page"><section className="panel"><h3><Warehouse/> Logistique</h3><p>Suivi opérationnel des réceptions, stocks, box, préparations et expéditions. Les connexions Supabase existantes restent inchangées.</p><div className="card-grid"><article className="work-card"><strong>Réceptions</strong><span>126 colis reçus aujourd'hui</span></article><article className="work-card"><strong>Préparations</strong><span>14 dossiers en attente</span></article><article className="work-card"><strong>Expéditions</strong><span>98 colis remis transporteurs</span></article></div></section></div>;
-  const accountingElement = <div className="module-page"><section className="panel"><h3><Calculator/> Comptabilité</h3><p>Vue synthétique prête pour factures, impayés, CA et exports comptables.</p><div className="stats-grid"><Stat label="CA du jour" value="2 840 €"/><Stat label="Impayés" value="6 420 €"/><Stat label="Factures à éditer" value="12"/><Stat label="Marge estimée" value="31%"/></div></section></div>;
-  const carrierElement = <div className="module-page"><section className="panel"><h3><Truck/> Transporteurs</h3><div className="card-grid"><article className="work-card"><strong>Colissimo</strong><span>42 expéditions · SLA 98%</span></article><article className="work-card"><strong>Mondial Relay</strong><span>31 expéditions · SLA 94%</span></article><article className="work-card"><strong>Chronopost</strong><span>25 expéditions · SLA 96%</span></article></div></section></div>;
-  const statsElement = <div className="module-page"><section className="panel chart-panel"><h3><LineChart/> Statistiques</h3><div className="bars tall"><i style={{height:'42%'}}/><i style={{height:'67%'}}/><i style={{height:'51%'}}/><i style={{height:'88%'}}/><i style={{height:'73%'}}/><i style={{height:'92%'}}/><i style={{height:'79%'}}/></div></section></div>;
+  const dashboard = <div className="v2-page v3-dashboard"><section className="v2-metric-grid v3-kpi-row"><V2MetricCard label="Commandes du jour" value="184" delta="+22%" icon={ShoppingCart} tone="orange"/><V2MetricCard label="Réceptions" value="37" delta="6 à contrôler" icon={PackageOpen} tone="green"/><V2MetricCard label="SKU en stock" value="8 420" delta="98% exactitude" icon={Boxes} tone="purple"/><V2MetricCard label="Expéditions" value="156" delta="SLA 97%" icon={Truck} tone="orange"/><V2MetricCard label="Clients actifs" value="42" delta="3 onboarding" icon={Users} tone="green"/><V2MetricCard label="Factures" value="12" delta="2 impayées" icon={FileText} tone="orange"/></section><section className="v3-dashboard-columns"><V2Panel title="Activité entrepôt" eyebrow="Temps réel"><V2Bars values={[42, 68, 55, 91, 76, 88, 64]}/></V2Panel><V2Panel title="Actions rapides" eyebrow="Gros boutons"><div className="cg-action-grid">{Object.values(modules).slice(1,7).map((module)=><a href={`#${module.key}`} key={module.key}><module.icon size={22}/>{module.title}</a>)}</div></V2Panel><V2Panel title="Connexion" eyebrow="Supabase"><div className="cg-status"><ShieldCheck/><strong>{isSupabaseConfigured ? 'Prêt à synchroniser' : 'Mode démonstration local'}</strong><span>Tables attendues : clients, commandes, produits, réceptions, emplacements et expéditions.</span></div></V2Panel></section><V2Panel title="Commandes prioritaires" eyebrow="Aujourd’hui"><V2Table columns={modules.commandes.columns} rows={modules.commandes.rows.map((row)=>[<strong>{row.primary}</strong>, row.secondary, <span className="v2-tag">{row.status}</span>, <em>{row.value}</em>, row.date])}/></V2Panel></div>;
+  const statistics = <div className="module-page cg-page"><Toolbar search={globalSearch} setSearch={setGlobalSearch} onNew={()=>window.alert('Nouveau rapport créé localement')}/><section className="v2-metric-grid"><V2MetricCard label="Productivité" value="312/h" delta="+9%" icon={Zap} tone="orange"/><V2MetricCard label="Exactitude stock" value="98,7%" delta="audit OK" icon={CheckCircle2} tone="green"/><V2MetricCard label="Retard moyen" value="8 min" delta="-14 min" icon={Clock} tone="purple"/><V2MetricCard label="CA logistique" value="28,4k€" delta="+11%" icon={BarChart3} tone="orange"/></section><V2Panel title="Volumes hebdomadaires" eyebrow="Réceptions / commandes / expéditions"><V2Bars values={[52, 61, 74, 69, 95, 82, 77, 88]}/></V2Panel></div>;
+  const settings = <div className="module-page cg-page"><Toolbar search={globalSearch} setSearch={setGlobalSearch} onNew={()=>window.alert('Nouveau connecteur prêt à configurer')}/><section className="panel"><h3><Settings/> Connexion utilisateur</h3><p>{auth.userEmail ? `Connecté : ${auth.userEmail}` : 'Connexion email/mot de passe via Supabase Auth.'}</p><div className="form-grid"><input placeholder="Email" value={auth.email} onChange={(e)=>setAuth({...auth, email:e.target.value})}/><input placeholder="Mot de passe" type="password" value={auth.password} onChange={(e)=>setAuth({...auth, password:e.target.value})}/></div><div className="module-actions"><button onClick={signIn} disabled={auth.loading}>Se connecter</button><button className="secondary" onClick={signOut}>Se déconnecter</button><button className="secondary"><Download/> Export configuration</button></div>{auth.message ? <p className="notice">{auth.message}</p> : null}</section><section className="panel"><h3>Architecture prête Supabase</h3><p>Les modules sont isolés, typés TypeScript, réutilisent la barre d’outils, le tableau moderne et le shell responsive. Les noms de tables sont centralisés dans <code>src/lib/supabase.ts</code>.</p></section></div>;
 
   const pages: Record<PageKey, { title: string; subtitle: string; element: ReactNode }> = {
-    dashboard: { title: 'Dashboard', subtitle: 'Pilotage quotidien COLOCK-GISTIK : KPI, préparations, alertes, prospects et performance.', element: dashboardElement },
-    logistique: { title: 'Logistique', subtitle: 'Réceptions, stocks, préparations, box et expéditions dans une vue opérationnelle compacte.', element: logisticsElement },
-    prospection: { title: 'Prospection IA', subtitle: 'Assistant IA, recherche Shopify, scoring Colock Prospect, relances et messages multicanaux.', element: <div className="module-page"><section className="panel"><h3><Bot/> Prospection IA</h3><p>L'assistant IA reste connecté aux fonctions existantes : recherche Shopify/Apify, imports, scoring, messages et relances.</p><div className="module-actions"><a className="big-action" href="#search"><SearchIcon/> Lancer une recherche IA</a><a className="big-action light" href="#messages"><Mail/> Messages générés</a><a className="big-action light" href="#followups"><RefreshCw/> Relances</a></div></section></div> },
-    clients: { title: 'Clients', subtitle: 'Portefeuille clients et prospects qualifiés avec actions rapides.', element: <div className="module-page"><section className="panel"><h3><Users/> Clients</h3><p>Accès au portefeuille prospects/clients sans modifier la donnée ni les règles de scoring.</p><div className="module-actions"><a className="big-action" href="#prospects"><Users/> Ouvrir la liste complète</a><button onClick={()=>exportProspectsCsv(prospects)}><Download/> Export CSV</button></div></section>{!visibleProspects.length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{visibleProspects.slice(0,8).map((p)=><ProspectCard key={p.id} p={p} onSelect={()=>select(p.id)} onContact={()=>markContacted(p.id)} onDelete={()=>deleteProspect(p.id)}/>)}</div></div> },
-    transporteurs: { title: 'Transporteurs', subtitle: 'Suivi des transporteurs, volumes expédiés et qualité de service.', element: carrierElement },
-    comptabilite: { title: 'Comptabilité', subtitle: 'CA, impayés, factures et indicateurs financiers.', element: accountingElement },
-    statistiques: { title: 'Statistiques', subtitle: 'Analyse visuelle des volumes, performances et signaux commerciaux.', element: statsElement },
-    search: { title: 'Recherche prospects', subtitle: 'Générez des pistes et ouvrez les recherches web/sociales publiques en un clic.', element: <div className="module-page"><div className="form-card"><h3><SearchIcon/> Critères</h3><div className="form-grid"><select value={criteria.platform} onChange={(e)=>setCriteria({...criteria, platform:e.target.value as Platform | 'Toutes'})}>{platforms.map((p)=><option key={p}>{p}</option>)}</select><input placeholder="Type produits" value={criteria.productType} onChange={(e)=>setCriteria({...criteria, productType:e.target.value})}/><input placeholder="Ville / pays" value={criteria.location} onChange={(e)=>setCriteria({...criteria, location:e.target.value})}/><input placeholder="Mots-clés" value={criteria.keywords} onChange={(e)=>setCriteria({...criteria, keywords:e.target.value})}/></div><div className="module-actions"><button onClick={()=>runApify()} disabled={apifyLoading} title={apifyConnected ? undefined : 'Le bouton testera Apify puis affichera une erreur précise si nécessaire'}><SearchIcon/> {apifyLoading ? 'Recherche en cours…' : 'Chercher'}</button><select value={String(autoQuota)} onChange={(e)=>setAutoQuota(e.target.value === 'illimité' ? 'illimité' : Number(e.target.value) as AutoProspectingQuota)}>{AUTO_PROSPECTING_QUOTAS.map((quota)=><option key={quota} value={quota}>Quota {quota}</option>)}</select><button onClick={runAutoProspecting} disabled={apifyLoading || !apifyConnected}><Wand2/> {autoProspecting ? 'Agent IA autonome…' : 'Prospection automatique'}</button><button onClick={enrichProspects} disabled={apifyLoading}><RefreshCw/> Enrichir les prospects</button><button onClick={addProspects} className="secondary"><Plus/> Ajouter prospects démo</button></div><p className="form-message">Synchronisation : {connection.connected ? 'Supabase connecté' : 'Supabase non connecté'} · Score Colock Prospect /100 : Shopify vérifié, contacts publics, France/francophone, réseaux actifs, mono-produit/petite boutique, livraison, activité et formulaire. Malus : marketplace, grande enseigne, plus de 100 produits, inactive, pas de contact, hors Europe francophone. Qualification : un prospect est qualifié dès qu’un email, un téléphone ou un formulaire de contact est détecté. Conservation : aucun blocage pour réseaux manquants si le site Shopify reste exploitable.</p><div className="keyword-library">{ECOMMERCE_KEYWORD_LIBRARY.map((group)=><details key={group.category}><summary>{group.category} · {group.keywords.length} mots-clés</summary><div className="chips">{group.keywords.map((keyword)=><Badge key={keyword}>{keyword}</Badge>)}</div></details>)}</div>{apifyMessages.length ? <ol className="form-message apify-status">{apifyMessages.map((message, index)=><li key={`${index}-${message}`}>{message}</li>)}</ol> : null}<div className="auto-dashboard"><strong>Historique des recherches</strong>{searchHistory.slice(-10).reverse().map((entry)=><span key={entry.id}>{entry.keyword} · {entry.country} · +{entry.insertedCount} · {new Date(entry.searchedAt).toLocaleString('fr-FR')}</span>)}</div></div><div className="form-card"><h3><Plus/> Création prospect</h3><div className="form-grid"><input placeholder="Nom boutique" value={newProspect.nomBoutique} onChange={(e)=>setNewProspect({...newProspect, nomBoutique:e.target.value})}/><input placeholder="Site web" value={newProspect.siteWeb} onChange={(e)=>setNewProspect({...newProspect, siteWeb:e.target.value})}/><input placeholder="Email" value={newProspect.email} onChange={(e)=>setNewProspect({...newProspect, email:e.target.value})}/><input placeholder="Téléphone" value={newProspect.telephone} onChange={(e)=>setNewProspect({...newProspect, telephone:e.target.value})}/><select value={newProspect.plateforme} onChange={(e)=>setNewProspect({...newProspect, plateforme:e.target.value as Platform})}><option>Shopify</option><option>Vinted</option><option>TikTok Shop</option><option>Etsy</option><option>Inconnue</option></select><input placeholder="Produits" value={newProspect.typeProduits} onChange={(e)=>setNewProspect({...newProspect, typeProduits:e.target.value})}/><input placeholder="Ville" value={newProspect.ville} onChange={(e)=>setNewProspect({...newProspect, ville:e.target.value})}/><input placeholder="Pays" value={newProspect.pays} onChange={(e)=>setNewProspect({...newProspect, pays:e.target.value})}/></div><button onClick={createProspect}><Plus/> Créer prospect</button></div><div className="form-card"><h3><Upload/> Imports</h3><textarea value={importText} onChange={(e)=>setImportText(e.target.value)} /><div className="module-actions"><button onClick={()=>importCsv('CSV')}><Upload/> Import CSV</button><button onClick={()=>importCsv('Shopify')}><ShoppingBag/> Import Shopify</button><button onClick={()=>importCsv('TikTok Shop')}><Rocket/> Import TikTok Shop</button><button onClick={()=>importCsv('Vinted')}><Upload/> Import Vinted</button><button onClick={()=>importCsv('Etsy')}><Upload/> Import Etsy</button><button onClick={()=>importCsv('Instagram')}><Upload/> Import Instagram</button><button onClick={()=>importCsv('Google')}><Upload/> Import Google</button></div><div className="form-grid"><input placeholder="Apify Actor ID" value={apifyActor} readOnly onChange={(e)=>setApifyActor(e.target.value)}/><input placeholder="Token Apify (masqué)" type="password" autoComplete="off" value={apifyToken} onChange={(e)=>setApifyToken(e.target.value)}/><button onClick={connectApifyAndRunShopifyTest} disabled={apifyLoading}><Rocket/> {apifyLoading ? 'Connexion…' : 'Connecter Apify'}</button></div><p className="form-message">En production, le token Apify est lu côté serveur depuis Vercel. Shopify utilise exclusivement l’actor clearpath/shopify-store-leads ; Google Maps est interdit.</p>{apifyMessages.length ? <ol className="form-message apify-status">{apifyMessages.map((message, index)=><li key={`${index}-${message}`}>{message}</li>)}</ol> : null}{visibleProspects.length ? <div className="table-card"><h3>Prospects trouvés</h3><V2Table columns={["Boutique","Site","Email","Téléphone","Score","Statut"]} rows={visibleProspects.slice(0, 25).map((p)=>[p.nomBoutique, p.siteWeb ? <a href={p.siteWeb} target="_blank">{p.siteWeb}</a> : '—', p.email || '—', p.telephone || '—', `${p.score}/100`, p.shopifyVerified ? 'Shopify ✅' : 'Non vérifié'])}/></div> : null}</div><div className="card-grid">{buildSearchLinks(criteria).map((l)=><a className="work-card link-card" href={l.url} target="_blank" key={l.label}><ExternalLink/><strong>{l.label}</strong><span>Source publique à vérifier avant import.</span></a>)}</div></div> },
-    shopifyRaw: { title: 'Résultats bruts Shopify', subtitle: 'Inspectez les données retournées par clearpath/shopify-store-leads avant insertion Supabase.', element: <div className="module-page"><section className="panel wide-panel"><h3>Dataset brut Apify Shopify</h3><p className="notice">{shopifyRawResults.length} résultat(s) brut(s) reçu(s) du dernier lancement Shopify.</p>{shopifyRawResults.length ? <pre className="message-box">{JSON.stringify(shopifyRawResults, null, 2)}</pre> : <p className="notice">Aucun résultat brut disponible. Lancez une recherche Shopify depuis l’onglet Recherche prospects.</p>}</section></div> },
-    priority: { title: 'Prospects prioritaires', subtitle: 'Shopify vérifié, France/francophone, contact disponible et score >65.', element: <div className="module-page"><div className="module-actions"><button onClick={()=>exportProspectsCsv(priorityProspects)}><Download/> Export CSV prioritaire</button></div>{!priorityProspects.length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{priorityProspects.map((p)=><ProspectCard key={p.id} p={p} onSelect={()=>select(p.id)} onContact={()=>markContacted(p.id)} onDelete={()=>deleteProspect(p.id)}/>)}</div></div> },
-    rejections: { title: 'Rejets', subtitle: 'Prospects rejetés avec score et raison exacte.', element: <div className="module-page"><section className="panel wide-panel"><h3>Rejets dernière prospection</h3>{!rejectedProspects.length ? <p className="notice">Aucun résultat</p> : null}<div className="data-list">{rejectedProspects.map((r)=><article className="data-row search-result" key={r.id}><strong>{r.nomBoutique}</strong><span>{r.siteWeb || 'Pas de site'} · score {r.score}/100</span><em>{r.reason}</em></article>)}</div></section></div> },
-    prospects: { title: 'Liste prospects', subtitle: 'Classement 🔥 Ultra chaud / 🟢 Chaud / 🟡 Moyen / ⚪ Faible selon signaux de volume, contacts publics et proximité.', element: <div className="module-page"><div className="module-actions"><button onClick={()=>exportProspectsCsv(prospects)}><Download/> Export CSV</button>{[
-      ['emailOnly','Email trouvé uniquement'], ['phoneOnly','Téléphone trouvé uniquement'], ['franceOnly','France vérifiée uniquement'], ['shopifyOnly','Shopify vérifié uniquement'], ['monoOnly','Mono-produit uniquement'], ['score40','Score >40'], ['score65','Score >65'], ['score85','Score >85'], ['instagramOnly','Avec Instagram'], ['facebookOnly','Avec Facebook'], ['tiktokOnly','Avec TikTok']
-    ].map(([key,label])=><label className="filter-toggle" key={key}><input type="checkbox" checked={filters[key as keyof typeof filters]} onChange={(event)=>setFilter(key as keyof typeof filters,event.target.checked)}/> {label}</label>)}</div>{!visibleProspects.length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{visibleProspects.map((p)=><ProspectCard key={p.id} p={p} onSelect={()=>select(p.id)} onContact={()=>markContacted(p.id)} onDelete={()=>deleteProspect(p.id)}/>)}</div></div> },
-    prospect: { title: 'Fiche prospect', subtitle: 'Informations utiles, score, message personnalisé et suppression RGPD.', element: <div className="module-page">{selected ? <><ProspectCard p={selected} onSelect={()=>setActionMessage('Succès : fiche prospect déjà ouverte.')} onContact={()=>markContacted(selected.id)} onDelete={()=>deleteProspect(selected.id)}/><div className="form-card"><h3>Modifier</h3><div className="form-grid"><input value={selected.email ?? ''} placeholder="Email public" onChange={(e)=>updateSelected({email:e.target.value})}/><input value={selected.telephone ?? ''} placeholder="Téléphone public" onChange={(e)=>updateSelected({telephone:e.target.value})}/><input value={selected.instagram ?? ''} placeholder="Instagram" onChange={(e)=>updateSelected({instagram:e.target.value})}/><input value={selected.facebook ?? ''} placeholder="Facebook" onChange={(e)=>updateSelected({facebook:e.target.value})}/><input value={selected.tiktok ?? ''} placeholder="TikTok" onChange={(e)=>updateSelected({tiktok:e.target.value})}/><input value={selected.linkedin ?? ''} placeholder="LinkedIn" onChange={(e)=>updateSelected({linkedin:e.target.value})}/><input value={selected.siteWeb ?? ''} placeholder="Site web" onChange={(e)=>updateSelected({siteWeb:e.target.value})}/><select value={selected.statutContact} onChange={(e)=>updateSelected({statutContact:e.target.value as Prospect['statutContact']})}>{prospectStatuses.map((status)=><option key={status}>{status}</option>)}</select><textarea value={selected.notes ?? ''} onChange={(e)=>updateSelected({notes:e.target.value})}/></div></div><pre className="message-box">{Object.entries(generateChannelMessages(selected)).map(([channel, message]) => `${channel.toUpperCase()}\n${message}`).join('\n\n---\n\n')}</pre></> : <p>Aucun prospect.</p>}</div> },
-    messages: { title: 'Messages générés', subtitle: 'Scripts personnalisés pour premier contact et relances.', element: <div className="module-page">{!prospects.filter((p)=>p.statutContact!=='Supprimé').length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{prospects.filter((p)=>p.statutContact!=='Supprimé').map((p)=><article className="panel" key={p.id}><h3>{p.nomBoutique}</h3><pre className="message-box">{Object.entries(generateChannelMessages(p)).map(([channel, message]) => `${channel.toUpperCase()}\n${message}`).join('\n\n---\n\n')}</pre></article>)}</div></div> },
-    followups: { title: 'Relances', subtitle: 'Séquences automatiques J+3 et J+7 à envoyer sans spam massif.', element: <div className="module-page">{!prospects.filter((p)=>p.statutContact!=='Supprimé').length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{prospects.filter((p)=>p.statutContact!=='Supprimé').map((p)=><article className="panel" key={p.id}><h3><RefreshCw/> {p.nomBoutique}</h3>{followUpDays.map((d)=><details key={d}><summary>Relance J+{d}</summary><pre className="message-box">{generateMessage(p, d as 3|7)}</pre></details>)}</article>)}</div></div> },
-    campaigns: { title: 'Campagnes', subtitle: 'Suivez les campagnes de prospection, leurs sources et leurs statistiques.', element: <div className="module-page"><div className="stats-grid"><Stat label="prospects trouvés" value={metrics.found}/><Stat label="prospects qualifiés" value={metrics.qualified}/><Stat label="emails trouvés" value={metrics.emails}/><Stat label="taux de qualification" value={`${metrics.qualificationRate}%`}/></div>{!campaigns.length ? <p className="notice">Aucun résultat</p> : null}<div className="prospect-list">{campaigns.map((c)=><article className="panel campaign-card" key={c.id}><h3><BarChart3/> {c.nom}</h3><p>{c.cible}</p><div className="chips"><Badge>{c.statut}</Badge><Badge>Apify · Shopify · TikTok Shop · CSV</Badge></div></article>)}</div></div> },
-    export: { title: 'Export CSV', subtitle: 'Téléchargez les prospects pour CRM, tableur ou import commercial.', element: <div className="module-page"><button className="big-action" onClick={()=>exportProspectsCsv(prospects)}><Download/> Télécharger le CSV</button><p className="notice">Colonnes : nom, site, réseaux, contacts publics, plateforme, produits, ville, score, classement, source, source réelle.</p></div> },
-
-    debug: { title: 'Santé système', subtitle: 'Diagnostic Supabase, Apify, tables, derniers appels et état des modules.', element: <div className="module-page"><section className="panel wide-panel"><h3><Activity/> Santé système</h3><div className="stats-grid"><Stat label="Supabase" value={connection.connected ? 'connecté ✅' : (connection.configured ? 'erreur ❌' : 'Supabase non connecté')}/><Stat label="Apify" value={apifyConnected ? 'connecté ✅' : 'non connecté ❌'}/><Stat label="Dernier appel Apify" value={lastApifyCall}/><Stat label="Dernière erreur" value={lastError || 'Aucune'}/><Stat label="Prospects récupérés" value={lastProspectsRetrieved}/><Stat label="Prospects enregistrés" value={lastProspectsSaved}/></div><h3>Tables Supabase attendues</h3><div className="chips">{['prospects','campagnes','messages','relances','clients','commandes','produits','receptions','preparations','expeditions'].map((table)=><Badge key={table}>{connection.connected ? `${table} détectée/accessible` : `Table manquante ou non testée : ${table}`}</Badge>)}</div>{connection.error ? <p className="notice danger-notice">{connection.error.includes('does not exist') ? `Table manquante : ${connection.error}` : connection.error}</p> : null}<h3>État des modules</h3><div className="data-list">{['Dashboard','Logistique','Nouvelle réception','Nouvelle préparation','Nouvelle expédition','Nouveau prospect','Ajouter client','Prospection IA','Recherche Shopify','Import Shopify','Import Vinted','Import TikTok Shop','Import Etsy','Import Instagram','Import Google boutiques','Import CSV','Messages générés','Relances','Clients','Transporteurs','Comptabilité','Recherche universelle','Assistant IA','Connexion Supabase','Connexion Apify'].map((name)=><article className="data-row" key={name}><strong>{name}</strong><span>{name.includes('Apify') ? (apifyConnected ? '✅ Fonctionne' : '🔌 Non connectée') : name.includes('Supabase') ? (connection.connected ? '✅ Fonctionne' : '🔌 Non connectée') : name.includes('Transporteurs') || name.includes('Comptabilité') || name.includes('Ajouter client') ? '🔌 Non connectée — Fonction non encore connectée' : '⚠️ Partiellement fonctionnelle'}</span></article>)}</div></section></div> },
-    settings: { title: 'Paramètres', subtitle: 'Architecture, Supabase et connecteurs futurs Apify / Octoparse.', element: <div className="module-page"><section className="panel"><h3>Authentification Supabase</h3><p>{auth.userEmail ? `Connecté : ${auth.userEmail}` : 'Connexion email/mot de passe Supabase.'}</p><div className="form-grid"><input placeholder="Email" value={auth.email} onChange={(e)=>setAuth({...auth, email:e.target.value})}/><input placeholder="Mot de passe" type="password" value={auth.password} onChange={(e)=>setAuth({...auth, password:e.target.value})}/></div><div className="module-actions"><button onClick={signIn} disabled={auth.loading}>Se connecter</button><button className="secondary" onClick={signOut}>Se déconnecter</button></div>{auth.message ? <p className="notice">{auth.message}</p> : null}</section><section className="panel"><h3>Architecture MVP</h3><ol><li>React + Supabase uniquement pour la persistance des prospects, campagnes, relances et messages.</li><li>Schéma SQL Supabase dans <code>supabase/prospecting.sql</code>.</li><li>Scoring et modèles dans <code>src/lib/prospecting.ts</code>.</li><li>Connecteurs web externes ajoutables ensuite via Edge Functions.</li></ol></section><section className="panel"><h3>Ajouter Apify ou Octoparse ensuite</h3><p>Créer une Edge Function Supabase <code>run-prospect-scraper</code>, appeler un actor Apify ou une tâche Octoparse, normaliser le résultat vers <code>prospects</code> et <code>prospect_sources</code>, puis planifier via cron. Garder uniquement les données publiques et limiter les volumes par campagne.</p></section></div> },
+    dashboard: { title: 'Tableau de bord', subtitle: 'Vue instantanée des opérations COLOCK-GISTIK, pensée pour PC, téléphone et terrain.', element: dashboard },
+    clients: { title: modules.clients.title, subtitle: modules.clients.subtitle, element: <ModulePage config={modules.clients}/> },
+    receptions: { title: modules.receptions.title, subtitle: modules.receptions.subtitle, element: <ModulePage config={modules.receptions}/> },
+    emplacements: { title: modules.emplacements.title, subtitle: modules.emplacements.subtitle, element: <ModulePage config={modules.emplacements}/> },
+    stock: { title: modules.stock.title, subtitle: modules.stock.subtitle, element: <ModulePage config={modules.stock}/> },
+    commandes: { title: modules.commandes.title, subtitle: modules.commandes.subtitle, element: <ModulePage config={modules.commandes}/> },
+    expeditions: { title: modules.expeditions.title, subtitle: modules.expeditions.subtitle, element: <ModulePage config={modules.expeditions}/> },
+    factures: { title: modules.factures.title, subtitle: modules.factures.subtitle, element: <ModulePage config={modules.factures}/> },
+    statistiques: { title: 'Statistiques', subtitle: 'Analyse des volumes, SLA, productivité et performance financière.', element: statistics },
+    settings: { title: 'Paramètres', subtitle: 'Authentification, configuration Supabase et connecteurs futurs.', element: settings },
   };
   const current = pages[activePage] ?? pages.dashboard;
-  return <Layout activePage={activePage in pages ? activePage : 'dashboard'} title={current.title} subtitle={current.subtitle} supabaseStatus={connection.connected ? 'connected' : 'disconnected'} globalSearch={globalSearch} onGlobalSearch={setGlobalSearch}>{actionMessage ? <p className="notice">{actionMessage}</p> : null}{connection.error ? <p className="notice danger-notice">Erreur : {connection.error}</p> : null}{connection.initializing ? <p className="notice">Connexion à Supabase en cours…</p> : null}{current.element}</Layout>;
+  return <Layout activePage={activePage in pages ? activePage : 'dashboard'} title={current.title} subtitle={current.subtitle} supabaseStatus={isSupabaseConfigured ? 'connected' : 'disconnected'} globalSearch={globalSearch} onGlobalSearch={setGlobalSearch}>{current.element}</Layout>;
 }
